@@ -5,9 +5,6 @@ import (
 	"time"
 )
 
-type TestCommit struct {
-}
-
 type Message struct {
 	ID        string
 	Body      []byte
