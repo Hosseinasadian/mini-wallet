@@ -1,0 +1,13 @@
+http_port: 5002
+http_shut_down_timeout: "5s"
+
+swagger:
+  auth:
+    host: "localhost:180/auth"
+    schemes: "http"
+  wallet:
+    host: "localhost:180/wallet"
+    schemes: "http"
+  notification:
+    host: "localhost:180/notification"
+    schemes: "http"

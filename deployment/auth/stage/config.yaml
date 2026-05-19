@@ -1,0 +1,19 @@
+service:
+  jwt_secret: ""
+  access_token_duration: 30000s # 50 minutes
+  refresh_token_duration: 604800s # 7d ays
+  email_regexp: '^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$'
+
+mysql:
+  host: "mini_wallet-db"
+  port: 3306
+  username: "wallet_admin"
+  password: "wallet_pass"
+  database: "wallet_db"
+
+http_port: 5002
+http_shut_down_timeout: "5s"
+
+publisher:
+  url: "amqp://guest:guest@mini_wallet-rabbitmq:5672"
+  retry_ttl: "5s"

@@ -1,0 +1,27 @@
+services:
+  mini_wallet-rabbitmq:
+    image: rabbitmq:3.13.7-management-alpine
+    container_name: mini_wallet-rabbitmq
+    ports:
+      - "56721:5672"   # AMQP protocol (non-TLS, used by Watermill/clients)
+      - "56711:5671"   # AMQP protocol with TLS
+      - "15673:15672" # Management UI
+    profiles:
+      - infrastructure
+      - stage
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+networks:
+  docker_wallet-network:
+    external: true

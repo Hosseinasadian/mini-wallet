@@ -1,0 +1,41 @@
+services:
+  mini_wallet-redis:
+    image: redis:6.2-bookworm
+    container_name: mini_wallet-redis
+    restart: unless-stopped
+    profiles:
+      - infrastructure
+      - stage
+    ports:
+      - '63791:6379'
+    command: >
+      redis-server
+      --loglevel warning
+      --requirepass "redis_stage_password_2024"
+      --protected-mode yes
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+      --appendfsync everysec
+      --no-appendfsync-on-rewrite yes
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+      --maxmemory-policy noeviction
+    networks:
+      - docker_wallet-network
+    volumes:
+      - mini_wallet-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_stage_password_2024", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mini_wallet-redis-data:
+
+networks:
+  docker_wallet-network:
+    external: true

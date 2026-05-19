@@ -1,0 +1,20 @@
+services:
+  mini_wallet-traefik:
+    image: traefik:v3.7
+    container_name: mini_wallet-traefik
+    profiles:
+      - infrastructure
+      - stage
+    ports:
+      - "180:80"
+      - "18080:8080"
+    volumes:
+      - "./deployment/infrastructure/stage/traefik/traefik.yml:/etc/traefik/traefik.yml"
+      - "./deployment/infrastructure/stage/traefik/dynamic:/etc/traefik/dynamic"
+    networks:
+      - docker_wallet-network
+    restart: unless-stopped
+
+networks:
+  docker_wallet-network:
+    external: true

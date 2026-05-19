@@ -1,0 +1,20 @@
+services:
+  auth:
+    build:
+      context: .
+      dockerfile: ./deployment/auth/stage/Dockerfile
+    container_name: mini_wallet-auth
+    profiles:
+      - auth
+      - stage
+    expose:
+      - "5002"
+    environment:
+      ENV: stage
+    networks:
+      - docker_wallet-network
+    restart: unless-stopped
+
+networks:
+  docker_wallet-network:
+    external: true

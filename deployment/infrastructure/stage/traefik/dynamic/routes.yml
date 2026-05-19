@@ -1,0 +1,75 @@
+http:
+  routers:
+    docs:
+      rule: "PathPrefix(`/docs`)"
+      entryPoints: ["web"]
+      middlewares: ["strip-docs-prefix"]
+      service: docs-service
+
+    auth:
+      rule: "PathPrefix(`/auth`)"
+      entryPoints: ["web"]
+      middlewares: ["strip-auth-prefix", "rate-limit"]
+      service: auth-service
+
+    wallet:
+      rule: "PathPrefix(`/wallet`)"
+      entryPoints: ["web"]
+      middlewares: ["strip-wallet-prefix", "rate-limit"]
+      service: wallet-service
+
+    notification:
+      rule: "PathPrefix(`/notification`)"
+      entryPoints: ["web"]
+      middlewares: ["strip-notification-prefix", "sse-headers"]
+      service: notification-service
+
+  middlewares:
+    strip-docs-prefix:
+      stripPrefix:
+        prefixes: [ "/docs" ]
+
+    strip-auth-prefix:
+      stripPrefix:
+        prefixes: ["/auth"]
+
+    strip-wallet-prefix:
+      stripPrefix:
+        prefixes: ["/wallet"]
+
+    strip-notification-prefix:
+      stripPrefix:
+        prefixes: ["/notification"]
+
+    sse-headers:
+      headers:
+        customResponseHeaders:
+          X-Accel-Buffering: "no"
+          Cache-Control: "no-cache"
+          Connection: "keep-alive"
+
+    rate-limit:
+      rateLimit:
+        average: 100
+        burst: 50
+
+  services:
+    docs-service:
+      loadBalancer:
+        servers:
+          - url: "http://mini_wallet-docs:5002"
+
+    auth-service:
+      loadBalancer:
+        servers:
+          - url: "http://mini_wallet-auth:5002"
+
+    wallet-service:
+      loadBalancer:
+        servers:
+          - url: "http://mini_wallet-wallet:5002"
+
+    notification-service:
+      loadBalancer:
+        servers:
+          - url: "http://mini_wallet-notification:5002"

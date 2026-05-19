@@ -1,0 +1,36 @@
+services:
+  mini_wallet-db:
+    image: mariadb:11.6.2
+    container_name: mini_wallet-mariadb
+    environment:
+      MYSQL_DATABASE: wallet_db
+      MYSQL_USER: wallet_admin
+      MYSQL_PASSWORD: wallet_pass
+      MYSQL_ROOT_PASSWORD: wallet_root_pass
+    volumes:
+      - db-data:/var/lib/mysql
+    ports:
+      - "33061:3306"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb_buffer_pool_size=256M
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  db-data:
+
+networks:
+  docker_wallet-network:
+    external: true

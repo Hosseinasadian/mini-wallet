@@ -1,0 +1,20 @@
+services:
+  docs:
+    build:
+      context: .
+      dockerfile: ./deployment/docs/stage/Dockerfile
+    container_name: mini_wallet-docs
+    profiles:
+      - docs
+      - stage
+    expose:
+      - "5002"
+    environment:
+      ENV: stage
+    networks:
+      - docker_wallet-network
+    restart: unless-stopped
+
+networks:
+  docker_wallet-network:
+    external: true

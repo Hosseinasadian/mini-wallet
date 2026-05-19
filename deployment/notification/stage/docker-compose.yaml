@@ -1,0 +1,20 @@
+services:
+  notification:
+    build:
+      context: .
+      dockerfile: ./deployment/notification/stage/Dockerfile
+    container_name: mini_wallet-notification
+    profiles:
+      - notification
+      - stage
+    expose:
+      - "5002"
+    environment:
+      ENV: stage
+    networks:
+      - docker_wallet-network
+    restart: unless-stopped
+
+networks:
+  docker_wallet-network:
+    external: true

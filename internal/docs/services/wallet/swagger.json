@@ -1,0 +1,15 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "Wallet Management",
+        "title": "Wallet Service API",
+        "contact": {
+            "name": "Hossein Asadian",
+            "email": "Hosseinasadian442@email.com"
+        },
+        "version": "1.0"
+    },
+    "host": "localhost",
+    "basePath": "/",
+    "paths": {}
+}
