@@ -74,6 +74,7 @@ jobs:
   build-and-push:
     needs: detect-changes
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
         include:
@@ -86,8 +87,6 @@ jobs:
           - service: notification
             changed: ${{ needs.detect-changes.outputs.notification }}
 
-    if: matrix.changed == 'true'
-
     steps:
       - uses: actions/checkout@v4
 
@@ -98,14 +97,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build & Push ${{ matrix.service }}
+        if: matrix.changed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./deployment/${{ matrix.service }}/stage/Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
-            ${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            hossein1992/mini-wallet-${{ matrix.service }}:latest
+            hossein1992/mini-wallet-${{ matrix.service }}:${{ github.sha }}
 
   deploy-stage:
     needs: [build-and-push, detect-changes]
