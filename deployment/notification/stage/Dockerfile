@@ -6,6 +6,11 @@ COPY go.mod go.sum ./
 COPY vendor/ vendor/
 COPY . .
 
+RUN if [ ! -d "vendor" ] || [ -z "$(ls -A vendor)" ] || ! go mod verify 2>/dev/null; then \
+        go mod tidy && \
+        go mod vendor; \
+    fi
+
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -mod=vendor \
     -o notification \
