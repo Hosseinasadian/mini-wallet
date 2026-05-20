@@ -105,8 +105,8 @@ jobs:
           file: ./deployment/${{ matrix.service }}/stage/Dockerfile
           push: true
           tags: |
-            hossein1992/mini-wallet-${{ matrix.service }}:latest
-            hossein1992/mini-wallet-${{ matrix.service }}:${{ github.sha }}
+            hossein1992/mini-wallet/${{ matrix.service }}:latest
+            hossein1992/mini-wallet/${{ matrix.service }}:${{ github.sha }}
 
   deploy-stage:
     needs: [build-and-push, detect-changes]
