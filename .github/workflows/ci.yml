@@ -1,0 +1,156 @@
+name: Mini Wallet CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: hossein1992/mini-wallet
+  SERVICES: "auth wallet docs notification"
+  BASE_URL: "http://localhost:180"
+
+jobs:
+  # ================================
+  # 1. PR CHECK - Test All Services
+  # ================================
+  pr-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      changed_services: ${{ steps.changes.outputs.changed_services }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect changed services
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            auth:
+              - 'internal/auth/**'
+              - 'deployment/auth/**'
+              - 'cmd/auth/**'
+              - 'pkg/**'
+            wallet:
+              - 'internal/wallet/**'
+              - 'deployment/wallet/**'
+              - 'cmd/wallet/**'
+              - 'pkg/**'
+            docs:
+              - 'internal/docs/**'
+              - 'deployment/docs/**'
+              - 'cmd/docs/**'
+              - 'pkg/**'
+            notification:
+              - 'internal/notification/**'
+              - 'deployment/notification/**'
+              - 'cmd/notification/**'
+              - 'pkg/**'
+
+      - name: Build changed services list
+        id: list
+        run: |
+          SERVICES=""
+          [ "${{ steps.changes.outputs.auth }}" == "true" ] && SERVICES="$SERVICES auth"
+          [ "${{ steps.changes.outputs.wallet }}" == "true" ] && SERVICES="$SERVICES wallet"
+          [ "${{ steps.changes.outputs.docs }}" == "true" ] && SERVICES="$SERVICES docs"
+          [ "${{ steps.changes.outputs.notification }}" == "true" ] && SERVICES="$SERVICES notification"
+          echo "changed_services=$SERVICES" >> $GITHUB_OUTPUT
+          echo "📝 Changed services: $SERVICES"
+
+      - name: Start infrastructure
+        run: |
+          make check-network
+          make start-infrastructure-stage
+
+      - name: Start ALL services for testing
+        run: |
+          echo "🚀 Starting all services for integration test..."
+          for service in ${{ env.SERVICES }}; do
+            echo "Starting $service..."
+            make start-$service-stage
+          done
+
+      - name: Wait for services ready
+        run: sleep 15
+
+      - name: Show running containers
+        run: docker ps
+
+      - name: Health check ALL services
+        run: |
+          echo "🏥 Running health checks for all services..."
+          for service in ${{ env.SERVICES }}; do
+            echo "Checking $service at ${{ env.BASE_URL }}/$service/ping"
+            curl --fail ${{ env.BASE_URL }}/$service/ping || exit 1
+          done
+          echo "✅ All services are healthy!"
+
+      - name: Debug logs on failure
+        if: failure()
+        run: |
+          echo "❌ Tests failed! Showing logs..."
+          docker ps -a
+          for service in ${{ env.SERVICES }}; do
+            echo "=== Logs for $service ==="
+            docker logs mini_wallet-$service --tail 50 || true
+          done
+
+      - name: Stop services
+        if: always()
+        run: |
+          make stop-services-stage || true
+          make stop-infrastructure-stage || true
+
+  # ================================
+  # 2. BUILD & PUSH - Only Changed Services
+  # ================================
+  build-and-push:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: pr-check
+
+    strategy:
+      matrix:
+        include:
+          - service: auth
+            changed: ${{ needs.pr-check.outputs.changed_services }}
+          - service: wallet
+            changed: ${{ needs.pr-check.outputs.changed_services }}
+          - service: docs
+            changed: ${{ needs.pr-check.outputs.changed_services }}
+          - service: notification
+            changed: ${{ needs.pr-check.outputs.changed_services }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push ${{ matrix.service }}
+        if: contains(needs.pr-check.outputs.changed_services, matrix.service)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./deployment/${{ matrix.service }}/stage/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:stage
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}-${{ matrix.service }}:latest
+
+      - name: Summary
+        run: |
+          echo "## 🚀 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Services pushed: $CHANGED_SERVICES" >> $GITHUB_STEP_SUMMARY
+          echo "📦 Commit SHA: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY

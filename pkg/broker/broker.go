@@ -35,13 +35,10 @@ type Subscriber interface {
 }
 
 type Config struct {
-	URL string `koanf:"url"`
-
-	RetryTTL time.Duration `koanf:"retry_ttl"`
-
+	URL            string        `koanf:"url"`
+	RetryTTL       time.Duration `koanf:"retry_ttl"`
 	Workers        int           `koanf:"workers"`
 	MaxRetry       int64         `koanf:"max_retry"`
 	PrefetchCount  int           `koanf:"prefetch_count"`
 	HandlerTimeout time.Duration `koanf:"handler_timeout"`
-	//
 }

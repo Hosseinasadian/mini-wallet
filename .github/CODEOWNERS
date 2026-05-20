@@ -1,0 +1,3 @@
+.github/CODEOWNERS @hossein1992
+.github/workflows/ci.yml @hossein1992
+makefile @hossein1992
