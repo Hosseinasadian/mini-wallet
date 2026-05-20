@@ -1,3 +1,4 @@
-.github/CODEOWNERS @hossein1992
-.github/workflows/ci.yml @hossein1992
-makefile @hossein1992
+.github/CODEOWNERS @hosseinasadian
+.github/workflows/ci.yml @hosseinasadian
+.github/workflows/auto-approve.yml @hosseinasadian
+makefile @hosseinasadian
