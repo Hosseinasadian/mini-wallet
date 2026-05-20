@@ -8,6 +8,7 @@ permissions:
   pull-requests: write
   checks: read
 
+
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
