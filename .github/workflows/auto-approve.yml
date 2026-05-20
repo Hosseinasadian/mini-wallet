@@ -5,19 +5,20 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-permissions:
-  pull-requests: write
-
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
-    if: github.actor == 'hosseinasadian'
+    if: github.event.pull_request.user.login == github.repository_owner
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Approve PR
         run: gh pr review ${{ github.event.pull_request.number }} --approve
         env:
-          GH_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
