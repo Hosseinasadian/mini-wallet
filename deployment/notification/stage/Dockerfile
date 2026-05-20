@@ -3,13 +3,9 @@ FROM golang:1.25-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
-COPY vendor/ vendor/
 COPY . .
+RUN go mod tidy && go mod vendor
 
-RUN if [ ! -d "vendor" ] || [ -z "$(ls -A vendor)" ] || ! go mod verify 2>/dev/null; then \
-        go mod tidy && \
-        go mod vendor; \
-    fi
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -mod=vendor \
