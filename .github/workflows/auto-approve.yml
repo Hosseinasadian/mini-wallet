@@ -1,3 +1,4 @@
+# .github/workflows/auto-approve.yml
 name: Auto Approve My PRs
 
 on:
@@ -6,15 +7,16 @@ on:
 
 permissions:
   pull-requests: write
-  checks: read
-
 
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
     if: github.actor == 'hosseinasadian'
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Approve PR
         run: gh pr review ${{ github.event.pull_request.number }} --approve
