@@ -5,11 +5,6 @@ import (
 	"time"
 )
 
-type TestStruct struct {
-	Foo string `json:"foo"`
-	Bar string `json:"bar"`
-}
-
 type Message struct {
 	ID        string
 	Body      []byte
