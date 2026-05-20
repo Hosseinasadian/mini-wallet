@@ -118,6 +118,7 @@ jobs:
 
       - name: Start infrastructure
         run: |
+          make check-network
           make start-infrastructure-stage
 
       - name: Start changed services
@@ -130,8 +131,6 @@ jobs:
             echo "No changed services detected."
             exit 0
           fi
-          
-          make check-network
 
           for service in $SERVICES; do
             echo "Starting $service ..."
