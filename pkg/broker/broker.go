@@ -43,4 +43,5 @@ type Config struct {
 	MaxRetry       int64         `koanf:"max_retry"`
 	PrefetchCount  int           `koanf:"prefetch_count"`
 	HandlerTimeout time.Duration `koanf:"handler_timeout"`
+	//
 }
