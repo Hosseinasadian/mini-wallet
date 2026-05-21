@@ -2,25 +2,16 @@ http_port: 5002
 http_shut_down_timeout: "3s"
 subscriber_shutdown_timeout: "3s"
 
-jwt_secret: ""
-
 redis:
   host: "mini_wallet-redis"
   port: 6379
-  password: "redis_stage_password_2024"
-  db: 0
 
 notification_service:
   ticket_ttl: "300s"
 
 subscriber:
-  url: "amqp://guest:guest@mini_wallet-rabbitmq:5672"
   retry_ttl: "5s"
   workers: 5
   max_retry: 3
   prefetch_count: 10
   handler_timeout: "10s"
-
-one_signal:
-  app_id: "cfa84292-1f4c-44cc-a051-819b35025592"
-  api_key: "os_v2_app_z6uefeq7jrcmzicrqgntkasvsidmvh5lgywu2fej4hcfv2bmjkpuuqzl7ooi2kyvmbium65nfa5f4ck2fjkszcyg5as2fu6musiancy"

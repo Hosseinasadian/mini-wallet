@@ -9,6 +9,7 @@ services:
       - stage
     expose:
       - "5002"
+    env_file: ./deployment/wallet/stage/.env
     environment:
       ENV: stage
     networks:
