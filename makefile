@@ -82,7 +82,7 @@ swagger-generate-notification:
 	cd internal/notification/delivery/http && swag init -g server.go -o $(DOCS_DIR)/notification --pd --parseInternal --ot json
 
 swagger-generate:
-	@echo "Generating swagger documentation..."
+	@echo "Generating swagger documentation...."
 	@$(MAKE) swagger-generate-auth
 	@$(MAKE) swagger-generate-wallet
 	@$(MAKE) swagger-generate-notification
