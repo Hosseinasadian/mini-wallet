@@ -84,35 +84,8 @@ jobs:
             make start-$service-stage
           done
 
-      - name: Debug network and services
-        run: |
-          echo "=== Docker containers ==="
-          docker ps -a
-          
-          echo "=== Docker networks ==="
-          docker network ls
-          
-          echo "=== Traefik logs ==="
-          docker logs mini_wallet-traefik --tail 50 || echo "No traefik container found"
-          
-          echo "=== Testing direct service access ==="
-          curl -v http://localhost:5002/ready || echo "Auth direct failed"
-          curl -v http://localhost:5003/ready || echo "Wallet direct failed" 
-          curl -v http://localhost:5004/ready || echo "Docs direct failed"
-          curl -v http://localhost:5005/ready || echo "Notification direct failed"
-          
-          echo "=== Testing via localhost:180 ==="
-          curl -v http://localhost:180/auth/ready || echo "Auth via 180 failed"
-          curl -v http://localhost:180/notification/ready || echo "Notification via 180 failed"
-
       - name: Wait for services ready
-        run: |
-          sudo apt-get update && sudo apt-get install -y wait-for-it
-          
-          for service in ${{ env.SERVICES }}; do
-            echo "Waiting for $service..."
-            wait-for-it localhost:180/$service/ready -t 60
-          done
+        run: sleep 60
 
       - name: Show running containers
         run: docker ps
