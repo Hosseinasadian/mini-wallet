@@ -76,6 +76,27 @@ jobs:
           make check-network
           make start-infrastructure-stage
 
+      - name: Debug network and services
+        run: |
+          echo "=== Docker containers ==="
+          docker ps -a
+          
+          echo "=== Docker networks ==="
+          docker network ls
+          
+          echo "=== Traefik logs ==="
+          docker logs mini_wallet-traefik --tail 50 || echo "No traefik container found"
+          
+          echo "=== Testing direct service access ==="
+          curl -v http://localhost:5002/ready || echo "Auth direct failed"
+          curl -v http://localhost:5003/ready || echo "Wallet direct failed" 
+          curl -v http://localhost:5004/ready || echo "Docs direct failed"
+          curl -v http://localhost:5005/ready || echo "Notification direct failed"
+          
+          echo "=== Testing via localhost:180 ==="
+          curl -v http://localhost:180/auth/ready || echo "Auth via 180 failed"
+          curl -v http://localhost:180/notification/ready || echo "Notification via 180 failed"
+
       - name: Start ALL services for testing
         run: |
           echo "🚀 Starting all services for integration test..."
