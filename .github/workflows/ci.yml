@@ -76,6 +76,14 @@ jobs:
           make check-network
           make start-infrastructure-stage
 
+      - name: Start ALL services for testing
+        run: |
+          echo "🚀 Starting all services for integration test..."
+          for service in ${{ env.SERVICES }}; do
+            echo "Starting $service..."
+            make start-$service-stage
+          done
+
       - name: Debug network and services
         run: |
           echo "=== Docker containers ==="
@@ -96,14 +104,6 @@ jobs:
           echo "=== Testing via localhost:180 ==="
           curl -v http://localhost:180/auth/ready || echo "Auth via 180 failed"
           curl -v http://localhost:180/notification/ready || echo "Notification via 180 failed"
-
-      - name: Start ALL services for testing
-        run: |
-          echo "🚀 Starting all services for integration test..."
-          for service in ${{ env.SERVICES }}; do
-            echo "Starting $service..."
-            make start-$service-stage
-          done
 
       - name: Wait for services ready
         run: |
