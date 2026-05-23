@@ -85,7 +85,13 @@ jobs:
           done
 
       - name: Wait for services ready
-        run: sleep 15
+        run: |
+          sudo apt-get update && sudo apt-get install -y wait-for-it
+          
+          for service in ${{ env.SERVICES }}; do
+            echo "Waiting for $service..."
+            wait-for-it localhost:180/$service/ready -t 60
+          done
 
       - name: Show running containers
         run: docker ps
