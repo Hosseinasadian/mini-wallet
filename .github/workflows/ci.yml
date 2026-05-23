@@ -94,8 +94,8 @@ jobs:
         run: |
           echo "🏥 Running health checks for all services..."
           for service in ${{ env.SERVICES }}; do
-            echo "Checking $service at ${{ env.BASE_URL }}/$service/ping"
-            curl --fail ${{ env.BASE_URL }}/$service/ping || exit 1
+            echo "Checking $service at ${{ env.BASE_URL }}/$service/live"
+            curl --fail ${{ env.BASE_URL }}/$service/live || exit 1
           done
           echo "✅ All services are healthy!"
 

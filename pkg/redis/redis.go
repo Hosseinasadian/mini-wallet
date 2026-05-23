@@ -59,3 +59,7 @@ func (a *Redis) Close() error {
 func IsNil(err error) bool {
 	return errors.Is(err, redis.Nil)
 }
+
+func (a *Redis) Ping(ctx context.Context) error {
+	return a.client.Ping(ctx).Err()
+}

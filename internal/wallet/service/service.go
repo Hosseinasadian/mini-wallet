@@ -2,6 +2,7 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"net/http"
@@ -15,6 +16,15 @@ func NewService(walletRepo Repository) *Service {
 	return &Service{
 		walletRepo: walletRepo,
 	}
+}
+
+func (s *Service) IsReady(ctx context.Context) (error, int) {
+	wErr := s.walletRepo.Ping(ctx)
+	if wErr != nil {
+		return errors.New("wallet db down"), http.StatusServiceUnavailable
+	}
+
+	return nil, http.StatusOK
 }
 
 func (s *Service) Transfer(ctx context.Context, userId uint64, req TransferRequest) (*TransferResponse, error, int) {

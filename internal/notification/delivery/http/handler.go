@@ -20,9 +20,24 @@ func NewHandler(notificationService *notification.Service, notificationHub *hub.
 	return Handler{notificationService: notificationService, notificationHub: notificationHub}
 }
 
-func (h *Handler) PingHandler(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"message": "pong",
+func (h *Handler) LiveHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "alive",
+	})
+}
+
+func (h *Handler) ReadyHandler(c *gin.Context) {
+	err, code := h.notificationService.IsReady(c.Request.Context())
+	if err != nil {
+		c.JSON(code, gin.H{
+			"ready":    false,
+			"response": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(code, gin.H{
+		"ready": true,
 	})
 }
 

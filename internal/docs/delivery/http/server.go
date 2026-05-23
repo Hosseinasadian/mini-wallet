@@ -11,6 +11,7 @@ import (
 	"log"
 	stdhttp "net/http"
 	"strings"
+	"time"
 )
 
 type RoutesConfig struct {
@@ -37,8 +38,12 @@ func NewServer(addr string, handler Handler, routes RoutesConfig) *Server {
 	}
 
 	s.httpServer = &stdhttp.Server{
-		Addr:    addr,
-		Handler: s.engine,
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.setRoutes()
@@ -48,7 +53,9 @@ func NewServer(addr string, handler Handler, routes RoutesConfig) *Server {
 func (s *Server) setRoutes() {
 	r := s.engine
 
-	r.GET("/ping", s.handler.PingHandler)
+	r.GET("/live", s.handler.LiveHandler)
+	r.GET("/ready", s.handler.ReadyHandler)
+
 	r.GET("/api-list", func(c *gin.Context) {
 		c.Data(
 			stdhttp.StatusOK,

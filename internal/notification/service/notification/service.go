@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/hosseinasadian/mini-wallet/pkg/redis"
 	"log"
+	"net/http"
 	"strconv"
 	"time"
 )
@@ -30,6 +31,15 @@ func NewService(config Config, redis *redis.Redis) *Service {
 		config: config,
 		redis:  redis,
 	}
+}
+
+func (s *Service) IsReady(ctx context.Context) (error, int) {
+	rErr := s.redis.Ping(ctx)
+	if rErr != nil {
+		return errors.New("redis down"), http.StatusServiceUnavailable
+	}
+
+	return nil, http.StatusOK
 }
 
 func (s *Service) CreateTicket(ctx context.Context, userId int64) (string, error) {

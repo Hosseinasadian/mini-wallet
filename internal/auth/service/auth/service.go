@@ -20,6 +20,7 @@ import (
 type UserRepository interface {
 	CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error)
 	GetUserByEmail(ctx context.Context, email string) (*User, error)
+	Ping(ctx context.Context) error
 }
 
 type TokenRepository interface {
@@ -28,6 +29,7 @@ type TokenRepository interface {
 	GetUserSessions(ctx context.Context, userID int64) ([]SessionItem, error)
 	RevokeSession(ctx context.Context, userID int64, sessionPublicID string, reason string, revokedBy string) error
 	RevokeAllSessions(ctx context.Context, userID int64, exceptSessionID *string, reason string, revokedBy string) error
+	Ping(ctx context.Context) error
 }
 
 type Config struct {
@@ -63,6 +65,19 @@ func NewService(userRepo UserRepository, tokenRepo TokenRepository, config Confi
 		userPublisher:         userPublisher,
 		notificationPublisher: notificationPublisher,
 	}
+}
+
+func (s *Service) IsReady(ctx context.Context) (error, int) {
+	urErr := s.userRepo.Ping(ctx)
+	if urErr != nil {
+		return errors.New("user db down"), http.StatusServiceUnavailable
+	}
+	trErr := s.tokenRepo.Ping(ctx)
+	if trErr != nil {
+		return errors.New("token db down"), http.StatusServiceUnavailable
+	}
+
+	return nil, http.StatusOK
 }
 
 func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req RegisterRequest) (*RegisterResponse, error, int) {
