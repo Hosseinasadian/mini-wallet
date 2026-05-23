@@ -16,6 +16,10 @@ func NewRepository(db *sqlx.DB) *Repository {
 	}
 }
 
+func (repo *Repository) Ping(ctx context.Context) error {
+	return repo.db.PingContext(ctx)
+}
+
 func (repo *Repository) GetBalance(ctx context.Context, walletID uint64) (int64, error) {
 	var balance int64
 	err := repo.db.GetContext(ctx, &balance, "SELECT balance FROM wallets WHERE id = ?", walletID)

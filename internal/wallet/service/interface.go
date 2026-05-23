@@ -11,4 +11,5 @@ type TxOps interface {
 
 type Repository interface {
 	RunInTx(ctx context.Context, fn func(exec TxOps) error) error
+	Ping(ctx context.Context) error
 }

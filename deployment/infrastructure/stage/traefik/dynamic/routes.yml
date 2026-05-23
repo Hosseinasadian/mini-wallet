@@ -2,44 +2,59 @@ http:
   routers:
     docs:
       rule: "PathPrefix(`/docs`)"
-      entryPoints: ["web"]
-      middlewares: ["strip-docs-prefix"]
+      middlewares:
+        - cb
+        - strip-docs-prefix
       service: docs-service
 
     auth:
       rule: "PathPrefix(`/auth`)"
-      entryPoints: ["web"]
-      middlewares: ["strip-auth-prefix", "rate-limit"]
+      middlewares:
+        - cb
+        - strip-auth-prefix
+        - rate-limit
       service: auth-service
 
     wallet:
       rule: "PathPrefix(`/wallet`)"
-      entryPoints: ["web"]
-      middlewares: ["strip-wallet-prefix", "rate-limit"]
+      middlewares:
+        - cb
+        - strip-wallet-prefix
+        - rate-limit
       service: wallet-service
 
     notification:
       rule: "PathPrefix(`/notification`)"
-      entryPoints: ["web"]
-      middlewares: ["strip-notification-prefix", "sse-headers"]
+      middlewares:
+        - cb
+        - strip-notification-prefix
+        - sse-headers
       service: notification-service
 
   middlewares:
+    cb:
+      circuitBreaker:
+        expression: "NetworkErrorRatio() > 0.5 || ResponseCodeRatio(500, 600, 0, 600) > 0.5"
+
     strip-docs-prefix:
       stripPrefix:
-        prefixes: [ "/docs" ]
+        prefixes:
+          - "/docs"
 
     strip-auth-prefix:
       stripPrefix:
-        prefixes: ["/auth"]
+        prefixes:
+          - "/auth"
 
     strip-wallet-prefix:
       stripPrefix:
-        prefixes: ["/wallet"]
+        prefixes:
+          - "/wallet"
 
     strip-notification-prefix:
       stripPrefix:
-        prefixes: ["/notification"]
+        prefixes:
+          - "/notification"
 
     sse-headers:
       headers:
@@ -58,18 +73,34 @@ http:
       loadBalancer:
         servers:
           - url: "http://mini_wallet-docs:5002"
+        healthCheck:
+          path: /ready
+          interval: 30s
+          timeout: 5s
 
     auth-service:
       loadBalancer:
         servers:
           - url: "http://mini_wallet-auth:5002"
+        healthCheck:
+          path: /ready
+          interval: 30s
+          timeout: 5s
 
     wallet-service:
       loadBalancer:
         servers:
           - url: "http://mini_wallet-wallet:5002"
+        healthCheck:
+          path: /ready
+          interval: 30s
+          timeout: 5s
 
     notification-service:
       loadBalancer:
         servers:
           - url: "http://mini_wallet-notification:5002"
+        healthCheck:
+          path: /ready
+          interval: 30s
+          timeout: 5s

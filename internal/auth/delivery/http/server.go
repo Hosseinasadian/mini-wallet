@@ -20,6 +20,7 @@ import (
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
 	"log"
 	stdhttp "net/http"
+	"time"
 )
 
 type Server struct {
@@ -40,8 +41,12 @@ func NewServer(addr string, handler Handler, jwtSecret string) *Server {
 	}
 
 	s.httpServer = &stdhttp.Server{
-		Addr:    addr,
-		Handler: s.engine,
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.setRoutes()
@@ -51,7 +56,8 @@ func NewServer(addr string, handler Handler, jwtSecret string) *Server {
 func (s *Server) setRoutes() {
 	r := s.engine
 
-	r.GET("/ping", s.handler.PingHandler)
+	r.GET("/live", s.handler.LiveHandler)
+	r.GET("/ready", s.handler.ReadyHandler)
 
 	// -------------------
 	// Public routes

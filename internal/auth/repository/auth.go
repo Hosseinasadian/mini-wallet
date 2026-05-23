@@ -19,6 +19,10 @@ func NewRepository(db *sqlx.DB) *Repository {
 	}
 }
 
+func (repo *Repository) Ping(ctx context.Context) error {
+	return repo.db.PingContext(ctx)
+}
+
 func (repo *Repository) CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error) {
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {

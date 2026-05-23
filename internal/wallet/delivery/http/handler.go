@@ -16,9 +16,24 @@ func NewHandler(walletService *wallet.Service) Handler {
 	}
 }
 
-func (h *Handler) PingHandler(c *gin.Context) {
-	c.JSON(200, gin.H{
-		"message": "pong",
+func (h *Handler) LiveHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "alive",
+	})
+}
+
+func (h *Handler) ReadyHandler(c *gin.Context) {
+	err, code := h.walletService.IsReady(c.Request.Context())
+	if err != nil {
+		c.JSON(code, gin.H{
+			"ready":    false,
+			"response": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(code, gin.H{
+		"ready": true,
 	})
 }
 
@@ -30,7 +45,7 @@ func (h *Handler) TransferHandler(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	response, err, code := h.walletService.Transfer(c.Request.Context(), 0, req)
 	if err != nil {
 		c.JSON(code, gin.H{

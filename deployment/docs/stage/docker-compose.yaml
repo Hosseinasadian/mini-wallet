@@ -14,7 +14,12 @@ services:
     networks:
       - docker_wallet-network
     restart: unless-stopped
-
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:5002/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 networks:
   docker_wallet-network:
     external: true

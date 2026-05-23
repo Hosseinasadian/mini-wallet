@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"log"
 	stdhttp "net/http"
+	"time"
 )
 
 type Server struct {
@@ -32,8 +33,12 @@ func NewServer(addr string, handler Handler) *Server {
 	}
 
 	s.httpServer = &stdhttp.Server{
-		Addr:    addr,
-		Handler: s.engine,
+		Addr:              addr,
+		Handler:           s.engine,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	s.setRoutes()
@@ -42,7 +47,10 @@ func NewServer(addr string, handler Handler) *Server {
 
 func (s *Server) setRoutes() {
 	router := s.engine
-	router.GET("/ping", s.handler.PingHandler)
+
+	router.GET("/live", s.handler.LiveHandler)
+	router.GET("/ready", s.handler.ReadyHandler)
+
 	router.POST("/transfer", s.handler.TransferHandler)
 }
 

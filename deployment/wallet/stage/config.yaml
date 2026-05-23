@@ -1,8 +1,5 @@
 mysql:
-  host: "mini_wallet-db"
   port: 3306
-  username: "wallet_admin"
-  password: "wallet_pass"
   database: "wallet_db"
 
 http_port: 5002
@@ -10,7 +7,6 @@ http_shut_down_timeout: "3s"
 subscriber_shutdown_timeout: "3s"
 
 subscriber:
-  url: "amqp://guest:guest@mini_wallet-rabbitmq:5672"
   retry_ttl: "5s"
   workers: 5
   max_retry: 3
