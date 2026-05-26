@@ -1,0 +1,28 @@
+services:
+  mini_wallet-grafana:
+    image: grafana/grafana:11.0.0
+    container_name: mini_wallet-grafana
+    ports:
+      - "3030:3000"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - mini_wallet-grafana-data:/var/lib/grafana
+      - ./deployment/infrastructure/stage/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deployment/infrastructure/stage/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - mini_wallet-loki
+
+volumes:
+  mini_wallet-grafana-data:
+
+networks:
+  docker_wallet-network:
+    external: true

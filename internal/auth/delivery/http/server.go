@@ -17,8 +17,8 @@ import (
 	"context"
 	"errors"
 	"github.com/gin-gonic/gin"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
-	"log"
 	stdhttp "net/http"
 	"time"
 )
@@ -29,15 +29,17 @@ type Server struct {
 	handler    Handler
 	httpServer *stdhttp.Server
 	jwtSecret  string
+	logger     *pkgLogger.Logger
 }
 
-func NewServer(addr string, handler Handler, jwtSecret string) *Server {
+func NewServer(addr string, handler Handler, jwtSecret string, logger *pkgLogger.Logger) *Server {
 
 	s := &Server{
-		engine:    gin.Default(),
+		engine:    gin.New(),
 		addr:      addr,
 		handler:   handler,
 		jwtSecret: jwtSecret,
+		logger:    logger,
 	}
 
 	s.httpServer = &stdhttp.Server{
@@ -55,6 +57,7 @@ func NewServer(addr string, handler Handler, jwtSecret string) *Server {
 
 func (s *Server) setRoutes() {
 	r := s.engine
+	r.Use(middleware.GinSlogLogger(s.logger), middleware.GinSlogRecovery(s.logger))
 
 	r.GET("/live", s.handler.LiveHandler)
 	r.GET("/ready", s.handler.ReadyHandler)
@@ -102,9 +105,9 @@ func (s *Server) setRoutes() {
 }
 
 func (s *Server) Run() {
-	log.Printf("HTTP server starting on %s", s.addr)
+	s.logger.Info("http server started", "addr", s.addr)
 	if err := s.httpServer.ListenAndServe(); err != nil && !errors.Is(err, stdhttp.ErrServerClosed) {
-		log.Printf("HTTP server error: %v", err)
+		s.logger.Debug("http server stopped", "err", err)
 	}
 }
 
@@ -113,6 +116,6 @@ func (s *Server) Stop(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("HTTP server stopped on %s", s.addr)
+	s.logger.Info("http server stopped", "addr", s.addr)
 	return nil
 }

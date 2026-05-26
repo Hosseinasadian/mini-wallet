@@ -2,18 +2,20 @@ package auth
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
+	"github.com/hosseinasadian/mini-wallet/pkg/httpresponse"
+	"github.com/hosseinasadian/mini-wallet/pkg/logger"
+	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
+	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/hosseinasadian/mini-wallet/pkg/user_access_token"
 	"golang.org/x/crypto/bcrypt"
 	"log"
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,70 +57,114 @@ type Service struct {
 	config                Config
 	userPublisher         broker.TopicPublisher
 	notificationPublisher broker.DirectPublisher
+	emailRegex            *regexp.Regexp
+	logger                *logger.Logger
 }
 
-func NewService(userRepo UserRepository, tokenRepo TokenRepository, config Config, userPublisher broker.TopicPublisher, notificationPublisher broker.DirectPublisher) *Service {
+func NewService(userRepo UserRepository, tokenRepo TokenRepository, config Config, userPublisher broker.TopicPublisher, notificationPublisher broker.DirectPublisher, logger *logger.Logger) *Service {
 	return &Service{
 		userRepo:              userRepo,
 		tokenRepo:             tokenRepo,
 		config:                config,
 		userPublisher:         userPublisher,
 		notificationPublisher: notificationPublisher,
+		emailRegex:            regexp.MustCompile(config.EmailRegexp),
+		logger:                logger,
 	}
 }
 
-func (s *Service) IsReady(ctx context.Context) (error, int) {
+func (s *Service) IsReady(ctx context.Context) error {
+	const op richerror.Operation = "auth.IsReady"
+
 	urErr := s.userRepo.Ping(ctx)
 	if urErr != nil {
-		return errors.New("user db down"), http.StatusServiceUnavailable
+		return richerror.New(op).
+			WithWrapper(urErr).
+			WithMessage("db down").
+			WithKind(richerror.KindUnavailable)
 	}
 	trErr := s.tokenRepo.Ping(ctx)
 	if trErr != nil {
-		return errors.New("token db down"), http.StatusServiceUnavailable
+		return richerror.New(op).
+			WithWrapper(urErr).
+			WithMessage("db down").
+			WithKind(richerror.KindUnavailable)
 	}
 
-	return nil, http.StatusOK
+	return nil
 }
 
-func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req RegisterRequest) (*RegisterResponse, error, int) {
+func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req RegisterRequest) (*httpresponse.Response, error) {
+	const op richerror.Operation = "auth.Register"
+	ctxLogger := middleware.GetLoggerContext(ctx, s.logger)
+
+	ctxLogger.Debug("starting registration", "email", maskEmail(req.Email))
+
+	// validation
+	vErr := richerror.New(op).
+		WithMessage("validation failed").
+		WithKind(richerror.KindUnprocessable)
+
 	if len(req.Password) < 8 {
-		return nil, fmt.Errorf("password too short"), http.StatusUnprocessableEntity
+		vErr = vErr.WithValidation("password", ErrPasswordTooShort)
 	}
 
 	if len(req.Password) > 72 {
-		return nil, fmt.Errorf("password too long"), http.StatusUnprocessableEntity
+		vErr = vErr.WithValidation("password", ErrPasswordTooLong)
 	}
 
-	emailRegex := regexp.MustCompile(s.config.EmailRegexp)
-	if !emailRegex.MatchString(req.Email) {
-		return nil, fmt.Errorf("invalid email"), http.StatusUnprocessableEntity
+	if !s.emailRegex.MatchString(req.Email) {
+		vErr = vErr.WithValidation("email", ErrInvalidEmail)
+	}
+
+	if vErr.HasValidations() {
+		ctxLogger.Warn("validation failed", "validations", vErr.Validations())
+		return nil, vErr
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		return nil, fmt.Errorf("failed to process password"), http.StatusInternalServerError
+		ctxLogger.Error("bcrypt hashing failed", "error", err)
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRegisterFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	var accountId int64
 	accountId, err = s.userRepo.CreateUserByEmailAndPassword(ctx, req.Email, string(hashedPassword))
 	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			return nil, fmt.Errorf("email already exists"), http.StatusUnprocessableEntity
+		var re *richerror.RichError
+		if errors.As(err, &re) && re.Kind() == richerror.KindConflict {
+			ctxLogger.Warn("duplicate email registration", "email", maskEmail(req.Email))
+
+			return nil, richerror.New(op).
+				WithWrapper(re).
+				WithMessage(ErrEmailAlreadyExists).
+				WithKind(richerror.KindConflict)
 		}
 
-		return nil, fmt.Errorf("failed to create user"), http.StatusInternalServerError
+		ctxLogger.Error("user creation failed", "error", err)
+
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRegisterFailed).
+			WithKind(richerror.KindInternal)
 	}
+
+	ctxLogger.Info("user created successfully", "account_id", accountId, "email", maskEmail(req.Email))
 
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
-		return &RegisterResponse{
+		ctxLogger.Error("refresh token generation failed", "error", err)
+		return httpresponse.New(http.StatusCreated, &RegisterResponse{
 			Message: "account created but login failed, please login manually",
-		}, nil, http.StatusCreated
+		}), nil
 	}
 
 	newToken := hashRefreshToken(refreshToken)
 	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
+
 	deviceID, sessionID, err := s.tokenRepo.UpsertSession(
 		ctx,
 		deviceCtx,
@@ -126,17 +172,23 @@ func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req Re
 		newToken,
 		expireRefreshToken,
 	)
-
 	if err != nil {
-		return &RegisterResponse{
-			Message: "account created but login failed, please login manually",
-		}, nil, http.StatusCreated
+		ctxLogger.Error("session upsert failed", "error", err)
+		return httpresponse.New(http.StatusCreated, httpresponse.Response{
+			Code: http.StatusCreated,
+			Data: &RegisterResponse{
+				Message: "account created but login failed, please login manually",
+			},
+		}), nil
 	}
 
 	var accessToken string
 	accessToken, err = user_access_token.GenerateAccessToken(accountId, sessionID, s.config.AccessTokenDuration)
 	if err != nil {
-		return nil, fmt.Errorf("account created but login failed, please login manually"), http.StatusCreated
+		ctxLogger.Error("access token generation failed", "error", err)
+		return httpresponse.New(http.StatusCreated, &RegisterResponse{
+			Message: "account created but login failed, please login manually",
+		}), nil
 	}
 
 	// publish event
@@ -151,47 +203,73 @@ func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req Re
 			eventBody,
 		)
 		if err != nil {
-			log.Println(err)
+			ctxLogger.Warn("event publish failed", "error", err, "event", "user.created")
 		} else {
-			log.Println("Successfully sent event", string(eventBody))
+			ctxLogger.Info("event published successfully", "event", "user.created", "account_id", accountId)
 		}
+	} else {
+		ctxLogger.Warn("event marshaling failed", "error", mErr)
 	}
 
-	return &RegisterResponse{
+	return httpresponse.New(http.StatusCreated, &RegisterResponse{
 		Message:      "account successfully created",
 		AccessToken:  &accessToken,
 		RefreshToken: &refreshToken,
 		DeviceID:     deviceID,
 		SessionID:    sessionID,
-	}, nil, http.StatusCreated
+	}), nil
 }
 
-func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req LoginRequest) (*LoginResponse, error, int) {
+func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req LoginRequest) (*httpresponse.Response, error) {
+	const op richerror.Operation = "auth.Login"
+
+	// validation
+	vErr := richerror.New(op).
+		WithMessage("validation failed").
+		WithKind(richerror.KindUnprocessable)
+
 	if req.Email == "" {
-		return nil, fmt.Errorf("email required"), http.StatusUnprocessableEntity
+		vErr = vErr.WithValidation("email", ErrInvalidEmail)
 	}
 
 	if req.Password == "" {
-		return nil, fmt.Errorf("password is required"), http.StatusUnprocessableEntity
+		vErr = vErr.WithValidation("password", ErrPasswordRequired)
+	}
+
+	if vErr.HasValidations() {
+		return nil, vErr
 	}
 
 	user, err := s.userRepo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("username or password is incorrect"), http.StatusUnauthorized
+		var re *richerror.RichError
+		if errors.As(err, &re) && re.Kind() == richerror.KindNotFound {
+			return nil, richerror.New(op).
+				WithWrapper(re).
+				WithMessage(ErrInvalidLoginCredentials).
+				WithKind(richerror.KindUnauthorized)
 		}
 
-		return nil, fmt.Errorf("failed to get user"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrLoginFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password))
 	if err != nil {
-		return nil, fmt.Errorf("username or password is incorrect"), http.StatusUnauthorized
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrInvalidLoginCredentials).
+			WithKind(richerror.KindUnauthorized)
 	}
 
 	refreshToken, err := generateRefreshToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate refresh token"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRefreshTokenFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
@@ -206,7 +284,10 @@ func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req Login
 
 	accessToken, err := user_access_token.GenerateAccessToken(user.ID, sessionID, s.config.AccessTokenDuration)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate access token"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrAccessTokenFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	// publish event
@@ -227,19 +308,24 @@ func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req Login
 	}
 	/**/
 
-	return &LoginResponse{
+	return httpresponse.New(http.StatusOK, &LoginResponse{
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		DeviceID:     deviceID,
 		SessionID:    sessionID,
 		User:         user,
-	}, nil, http.StatusOK
+	}), nil
 }
 
-func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, token string) (*RefreshTokenResponse, error, int) {
+func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, token string) (*httpresponse.Response, error) {
+	const op richerror.Operation = "auth.RefreshToken"
+
 	newRefreshToken, err := generateRefreshToken()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate refresh token"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRefreshTokenFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
@@ -250,29 +336,36 @@ func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, to
 
 	accessToken, err := user_access_token.GenerateAccessToken(userID, sessionID, s.config.AccessTokenDuration)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate access token"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrAccessTokenFailed).
+			WithKind(richerror.KindInternal)
 	}
 
-	return &RefreshTokenResponse{
+	return httpresponse.New(http.StatusOK, &RefreshTokenResponse{
 		AccessToken:  accessToken,
 		RefreshToken: newRefreshToken,
 		DeviceID:     deviceID,
 		SessionID:    sessionID,
-	}, nil, http.StatusOK
+	}), nil
 }
 
-func (s *Service) GetUserSessions(ctx context.Context, userID int64) ([]SessionItem, error, int) {
+func (s *Service) GetUserSessions(ctx context.Context, userID int64) (*httpresponse.Response, error) {
+	const op richerror.Operation = "auth.GetUserSessions"
 
 	sessions, err := s.tokenRepo.GetUserSessions(ctx, userID)
 	if err != nil {
-		log.Printf("failed to get user sessions: %v", err)
-		return nil, fmt.Errorf("failed to get sessions"), http.StatusInternalServerError
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrGetSessionsFailed).
+			WithKind(richerror.KindInternal)
 	}
 
-	return sessions, nil, http.StatusOK
+	return httpresponse.New(http.StatusOK, sessions), nil
 }
 
 func (s *Service) LogoutSession(ctx context.Context, userID int64, sessionPublicID string) error {
+	const op richerror.Operation = "auth.LogoutSession"
 
 	err := s.tokenRepo.RevokeSession(
 		ctx,
@@ -283,14 +376,17 @@ func (s *Service) LogoutSession(ctx context.Context, userID int64, sessionPublic
 	)
 
 	if err != nil {
-		log.Printf("failed to revoke session: %v", err)
-		return fmt.Errorf("failed to revoke session")
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRevokeSessionFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	return nil
 }
 
 func (s *Service) LogoutAllSessions(ctx context.Context, userID int64, currentSessionID *string) error {
+	const op richerror.Operation = "auth.LogoutAllSessions"
 
 	err := s.tokenRepo.RevokeAllSessions(
 		ctx,
@@ -301,9 +397,25 @@ func (s *Service) LogoutAllSessions(ctx context.Context, userID int64, currentSe
 	)
 
 	if err != nil {
-		log.Printf("failed to revoke all sessions: %v", err)
-		return fmt.Errorf("failed to revoke sessions")
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRevokeAllSessionsFailed).
+			WithKind(richerror.KindInternal)
 	}
 
 	return nil
+}
+
+func maskEmail(email string) string {
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return "***" // fallback
+	}
+	local := parts[0]
+	domain := parts[1]
+	if len(local) <= 2 {
+		return "***@" + domain
+	}
+	maskedLocal := local[:2] + strings.Repeat("*", len(local)-2)
+	return maskedLocal + "@" + domain
 }

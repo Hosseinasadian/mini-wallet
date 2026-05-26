@@ -1,0 +1,23 @@
+services:
+  mini_wallet-loki:
+    image: grafana/loki:3.0.0
+    container_name: mini_wallet-loki
+    ports:
+      - "3110:3100"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./deployment/infrastructure/stage/loki/config.yml:/etc/loki/config.yml
+      - mini_wallet-loki-data:/loki
+
+volumes:
+  mini_wallet-loki-data:
+
+networks:
+  docker_wallet-network:
+    external: true

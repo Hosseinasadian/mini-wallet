@@ -2,20 +2,27 @@ package repository
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/jmoiron/sqlx"
 	"time"
 )
 
 type Repository struct {
-	db *sqlx.DB
+	db     *sqlx.DB
+	logger *pkgLogger.Logger
 }
 
-func NewRepository(db *sqlx.DB) *Repository {
+func NewRepository(db *sqlx.DB, logger *pkgLogger.Logger) *Repository {
 	return &Repository{
-		db: db,
+		db:     db,
+		logger: logger,
 	}
 }
 
@@ -24,9 +31,13 @@ func (repo *Repository) Ping(ctx context.Context) error {
 }
 
 func (repo *Repository) CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error) {
+	const op = "repository.CreateUserByEmailAndPassword"
+
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return 0, err
+		return 0, richerror.New(op).
+			WithMessage("failed to begin transaction").
+			WithKind(richerror.KindInternal)
 	}
 
 	defer func() {
@@ -37,35 +48,64 @@ func (repo *Repository) CreateUserByEmailAndPassword(ctx context.Context, email,
 
 	res, err := tx.ExecContext(ctx, "INSERT INTO users (email, password_hash) VALUES (?, ?)", email, password)
 	if err != nil {
-		return 0, err
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return 0, richerror.New(op).
+				WithMessage("duplicate entry").
+				WithKind(richerror.KindConflict)
+		}
+
+		return 0, richerror.New(op).
+			WithMessage("failed to execute insert query").
+			WithKind(richerror.KindInternal)
 	}
 
 	id, err := res.LastInsertId()
 	if err != nil {
-		return 0, err
+		return 0, richerror.New(op).
+			WithMessage("failed to get last insert id").
+			WithKind(richerror.KindInternal)
 	}
 
 	if err = tx.Commit(); err != nil {
-		return 0, err
+		return 0, richerror.New(op).
+			WithMessage("failed to commit transaction").
+			WithKind(richerror.KindInternal)
 	}
 
 	return id, nil
 }
 
 func (repo *Repository) GetUserByEmail(ctx context.Context, email string) (*auth.User, error) {
+	const op = "repository.GetUserByEmail"
+
 	var user auth.User
 	err := repo.db.GetContext(ctx, &user, "SELECT * FROM users WHERE email=?", email)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, richerror.New(op).
+				WithWrapper(err).
+				WithMessage("user not found").
+				WithKind(richerror.KindNotFound)
+		}
+
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to get user").
+			WithKind(richerror.KindInternal)
 	}
 	return &user, nil
 }
 
 func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.DeviceContext, userID int64, refreshTokenHash string, expiresAt time.Time) (string, string, error) {
+	const op = "repository.UpsertSession"
 
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return "", "", err
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed := false
@@ -103,7 +143,10 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 		deviceCtx.AppVersion,
 	)
 	if err != nil {
-		return "", "", err
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
 	}
 
 	// fetch device (safe because UNIQUE(installation_id, platform))
@@ -117,7 +160,10 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 		deviceCtx.Platform,
 	)
 	if err != nil {
-		return "", "", err
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -194,12 +240,18 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 			existingSession.PublicID,
 		)
 		if err != nil {
-			return "", "", err
+			return "", "", richerror.New(op).
+				WithWrapper(err).
+				WithMessage("failed to upsert session").
+				WithKind(richerror.KindInternal)
 		}
 
 		// commit
 		if err = tx.Commit(); err != nil {
-			return "", "", err
+			return "", "", richerror.New(op).
+				WithWrapper(err).
+				WithMessage("failed to upsert session").
+				WithKind(richerror.KindInternal)
 		}
 		committed = true
 
@@ -236,7 +288,10 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 	)
 
 	if err != nil {
-		return "", "", err
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -244,7 +299,10 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 	// ---------------------------------------------------
 
 	if err = tx.Commit(); err != nil {
-		return "", "", err
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed = true
@@ -253,10 +311,15 @@ func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.Devic
 }
 
 func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.DeviceContext, oldRefreshTokenHash string, newRefreshTokenHash string, newExpiresAt time.Time) (string, string, int64, error) {
+	const op = "Repository.RotateRefreshToken"
 
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return "", "", 0, err
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to rotate refresh token").
+			WithKind(richerror.KindInternal)
+
 	}
 
 	committed := false
@@ -296,7 +359,10 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	// ---------------------------------------------------
 
 	if expiresAt.Before(time.Now()) {
-		return "", "", 0, fmt.Errorf("refresh token expired")
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to rotate refresh token").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -320,7 +386,10 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	)
 
 	if err != nil {
-		return "", "", 0, err
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to rotate refresh token").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -338,7 +407,10 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	)
 
 	if err != nil {
-		return "", "", 0, err
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to rotate refresh token").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -346,7 +418,10 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	// ---------------------------------------------------
 
 	if err = tx.Commit(); err != nil {
-		return "", "", 0, err
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to rotate refresh token").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed = true
@@ -355,6 +430,7 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 }
 
 func (repo *Repository) GetUserSessions(ctx context.Context, userID int64) ([]auth.SessionItem, error) {
+	const op = "Repository.GetUserSessions"
 
 	var sessions []auth.SessionItem
 
@@ -377,17 +453,24 @@ func (repo *Repository) GetUserSessions(ctx context.Context, userID int64) ([]au
     `, userID)
 
 	if err != nil {
-		return nil, err
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to get user sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	return sessions, nil
 }
 
 func (repo *Repository) RevokeSession(ctx context.Context, userID int64, sessionPublicID string, reason string, revokedBy string) error {
+	const op = "Repository.RevokeSession"
 
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed := false
@@ -402,7 +485,10 @@ func (repo *Repository) RevokeSession(ctx context.Context, userID int64, session
 	lockQuery := "SELECT id FROM device_sessions WHERE public_id = ? AND user_id = ? FOR UPDATE"
 
 	if _, err = tx.ExecContext(ctx, lockQuery, sessionPublicID, userID); err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	// move to history
@@ -443,16 +529,25 @@ func (repo *Repository) RevokeSession(ctx context.Context, userID int64, session
 	)
 
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	affected, err := res.RowsAffected()
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	if affected == 0 {
-		return fmt.Errorf("session not found")
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	// delete active session
@@ -467,12 +562,18 @@ func (repo *Repository) RevokeSession(ctx context.Context, userID int64, session
 	)
 
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke session").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed = true
@@ -481,10 +582,14 @@ func (repo *Repository) RevokeSession(ctx context.Context, userID int64, session
 }
 
 func (repo *Repository) RevokeAllSessions(ctx context.Context, userID int64, exceptSessionID *string, reason string, revokedBy string) error {
+	const op = "Repository.RevokeAllSessions"
 
 	tx, err := repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke all sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed := false
@@ -517,7 +622,10 @@ func (repo *Repository) RevokeAllSessions(ctx context.Context, userID int64, exc
 	`, whereClause)
 
 	if _, err = tx.ExecContext(ctx, lockQuery, selectArgs...); err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke all sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	// archive
@@ -554,7 +662,10 @@ func (repo *Repository) RevokeAllSessions(ctx context.Context, userID int64, exc
 
 	_, err = tx.ExecContext(ctx, query, selectArgs...)
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke all sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	// delete active sessions
@@ -566,12 +677,18 @@ func (repo *Repository) RevokeAllSessions(ctx context.Context, userID int64, exc
 
 	_, err = tx.ExecContext(ctx, deleteQuery, args...)
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke all sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	err = tx.Commit()
 	if err != nil {
-		return err
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to revoke all sessions").
+			WithKind(richerror.KindInternal)
 	}
 
 	committed = true

@@ -2,12 +2,12 @@ package commands
 
 import (
 	"github.com/hosseinasadian/mini-wallet/internal/wallet"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"github.com/spf13/cobra"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,11 +20,14 @@ var RootCmd = &cobra.Command{
 }
 
 var walletConfig wallet.Config
+var logger *pkgLogger.Logger
 
 func ReadWalletConfig() {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
+
 	dir, err := os.Getwd()
 	if err != nil {
-		log.Fatalf("could not get working directory: %v", err)
+		mainLogger.Fatal("unable to get working directory", "error", err)
 	}
 
 	environment := os.Getenv("ENV")
@@ -36,7 +39,7 @@ func ReadWalletConfig() {
 
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(configPath), yaml.Parser()); err != nil {
-		log.Fatalf("could not load config: %v", err)
+		mainLogger.Fatal("unable to load config", "error", err)
 	}
 
 	if err := k.Load(env.Provider(".", env.Opt{
@@ -54,14 +57,21 @@ func ReadWalletConfig() {
 			return k, v
 		},
 	}), nil); err != nil {
-		log.Fatalf("could not read config: %v", err)
+		mainLogger.Fatal("unable to read config", "error", err)
 	}
 
 	if err := k.Unmarshal("", &walletConfig); err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("unable to unmarshal config", "error", err)
 	}
 }
 
+func InitLogger() {
+	logger = pkgLogger.New().With(
+		"app", string(pkgLogger.AppWallet),
+	)
+}
+
 func init() {
+	InitLogger()
 	ReadWalletConfig()
 }

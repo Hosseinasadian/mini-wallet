@@ -1,0 +1,91 @@
+{
+  "title": "Dev Request Logs Dashboard",
+  "uid": "dev-request-logs",
+  "panels": [
+    {
+      "title": "Request Logs",
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{app=~\"${app}\"} | json | level=~\"${level}\" | layer=~\"${layer}\" | request_id=\"${request_id}\"",
+          "refId": "A"
+        }
+      ],
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "showLabels": true,
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "request_id",
+        "type": "textbox",
+        "label": "Request ID",
+        "description": "Enter the request_id (e.g., 550e8400-e29b-41d4-a716-446655440000)",
+        "query": "",
+        "current": {
+          "value": "****",
+          "text": "****"
+        },
+        "hide": 0
+      },
+      {
+        "name": "app",
+        "type": "custom",
+        "label": "Application",
+        "query": "auth,wallet,docs,notification",
+        "current": {
+          "value": "$__all",
+          "text": "All"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "allValue": "auth|wallet|docs|notification",
+        "multi": true
+      },
+      {
+        "name": "layer",
+        "type": "custom",
+        "label": "Layer",
+        "query": "main,http,service,repository,mysql",
+        "current": {
+          "value": "$__all",
+          "text": "All"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
+      },
+      {
+        "name": "level",
+        "type": "custom",
+        "label": "Level",
+        "query": "DEBUG,INFO,WARN,ERROR",
+        "current": {
+          "value": "$__all",
+          "text": "All"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s"
+}

@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/redis"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,12 +24,14 @@ type Config struct {
 type Service struct {
 	config Config
 	redis  *redis.Redis
+	logger *logger.Logger
 }
 
-func NewService(config Config, redis *redis.Redis) *Service {
+func NewService(config Config, redis *redis.Redis, logger *logger.Logger) *Service {
 	return &Service{
 		config: config,
 		redis:  redis,
+		logger: logger,
 	}
 }
 
@@ -45,13 +47,13 @@ func (s *Service) IsReady(ctx context.Context) (error, int) {
 func (s *Service) CreateTicket(ctx context.Context, userId int64) (string, error) {
 	ticket, tErr := generateTicketID()
 	if tErr != nil {
-		log.Printf("Failed to generate ticket id: %s", tErr.Error())
+		s.logger.Error("failed to generate ticket", "error", tErr)
 		return "", tErr
 	}
 
 	err := s.redis.Client().Set(ctx, ticketPrefix+ticket, userId, s.config.TicketTTL).Err()
 	if err != nil {
-		log.Printf("Failed to create ticket: %s", err.Error())
+		s.logger.Error("failed to save ticket", "error", err)
 		return "", fmt.Errorf("internal Server Error")
 	}
 
@@ -67,13 +69,13 @@ func (s *Service) ConsumeTicket(ctx context.Context, code string) (int64, error)
 	}
 
 	if err != nil {
-		log.Printf("Failed to get ticket: %s", err.Error())
+		s.logger.Error("failed to get ticket", "error", err)
 		return 0, fmt.Errorf("internal Server Error")
 	}
 
 	userId, err := strconv.ParseInt(idString, 10, 64)
 	if err != nil {
-		log.Printf("Failed to parse ticket: %s", err.Error())
+		s.logger.Error("failed to parse ticket id", "error", err)
 		return 0, fmt.Errorf("internal Server Error")
 	}
 

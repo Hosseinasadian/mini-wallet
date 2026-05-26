@@ -14,7 +14,7 @@ var serveCmd = &cobra.Command{
 }
 
 func serve() {
-	app := docsApp.Setup(docsConfig)
+	app := docsApp.Setup(docsConfig, logger)
 	app.Start()
 }
 

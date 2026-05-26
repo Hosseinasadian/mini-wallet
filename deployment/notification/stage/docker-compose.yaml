@@ -12,6 +12,8 @@ services:
     env_file: ./deployment/notification/stage/.env
     environment:
       ENV: stage
+      LOG_LEVEL: debug
+      GIN_MODE: release
     networks:
       - docker_wallet-network
     restart: unless-stopped
