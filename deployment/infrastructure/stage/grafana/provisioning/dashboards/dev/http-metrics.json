@@ -1,0 +1,191 @@
+{
+  "title": "Dev Metrics Dashboard",
+  "uid": "dev-metrics",
+  "panels": [
+    {
+      "title": "Total Request Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\"}[5m]))",
+          "legendFormat": "total",
+          "refId": "A",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "B",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "title": "Total Average Latency",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_duration_milliseconds_sum{job=\"otel-collector\"}[5m])) / sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\"}[5m]))",
+          "legendFormat": "total",
+          "refId": "A",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "sum(rate(http_server_duration_milliseconds_sum{job=\"otel-collector\"}[5m])) by (service_name) / sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "B",
+          "datasource": "Prometheus"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+    },
+    {
+      "title": "Total Error Rate (5xx)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", http_status_code=~\"5..\"}[5m]))",
+          "legendFormat": "total",
+          "refId": "A",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", http_status_code=~\"5..\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "B",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "title": "Total Error Rate (4xx)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", http_status_code=~\"4..\"}[5m]))",
+          "legendFormat": "total",
+          "refId": "A",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", http_status_code=~\"4..\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}",
+          "refId": "B",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 }
+    },
+    {
+      "title": "Row — Per Service",
+      "type": "row",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 }
+    },
+    {
+      "title": "Request Rate (per route)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (http_route, http_method)",
+          "legendFormat": "{{http_method}} {{http_route}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 }
+    },
+    {
+      "title": "Average Latency (per route)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_duration_milliseconds_sum{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (http_route, http_method) / sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (http_route, http_method)",
+          "legendFormat": "{{http_method}} {{http_route}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 }
+    },
+    {
+      "title": "Error Rate 5xx (per route)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", service_name=~\"${service}\", http_status_code=~\"5..\"}[5m])) by (http_route)",
+          "legendFormat": "{{http_route}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 }
+    },
+    {
+      "title": "Error Rate 4xx (per route)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum(rate(http_server_request_count_total{job=\"otel-collector\", service_name=~\"${service}\", http_status_code=~\"4..\"}[5m])) by (http_route)",
+          "legendFormat": "{{http_route}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 }
+    },
+    {
+      "title": "Latency Percentiles (per route)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_server_duration_milliseconds_bucket{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (le, http_route))",
+          "legendFormat": "p50 {{http_route}}",
+          "refId": "A",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_server_duration_milliseconds_bucket{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (le, http_route))",
+          "legendFormat": "p95 {{http_route}}",
+          "refId": "B",
+          "datasource": "Prometheus"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(http_server_duration_milliseconds_bucket{job=\"otel-collector\", service_name=~\"${service}\"}[5m])) by (le, http_route))",
+          "legendFormat": "p99 {{http_route}}",
+          "refId": "C",
+          "datasource": "Prometheus"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "custom",
+        "label": "Service",
+        "query": "auth,wallet,notification,docs",
+        "current": {
+          "value": "$__all",
+          "text": "All"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".+",
+        "multi": false
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s"
+}

@@ -12,3 +12,8 @@ http_shut_down_timeout: "5s"
 
 publisher:
   retry_ttl: "5s"
+
+otel:
+  service_name: "auth"
+  environment: "stage"
+  endpoint: "mini_wallet-otel-collector:4317"

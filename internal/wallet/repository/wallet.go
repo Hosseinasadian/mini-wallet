@@ -3,16 +3,19 @@ package repository
 import (
 	"context"
 	wallet "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/jmoiron/sqlx"
 )
 
 type Repository struct {
-	db *sqlx.DB
+	db     *sqlx.DB
+	logger *pkgLogger.Logger
 }
 
-func NewRepository(db *sqlx.DB) *Repository {
+func NewRepository(db *sqlx.DB, logger *pkgLogger.Logger) *Repository {
 	return &Repository{
-		db: db,
+		db:     db,
+		logger: logger,
 	}
 }
 

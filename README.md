@@ -214,6 +214,47 @@ This project reflects hands-on experience with:
 
 ---
 
+## Observability & Dashboards
+
+We provide role‑based dashboards to monitor system health, debug issues, and support customer inquiries. All services expose structured logs (JSON) and HTTP metrics via OpenTelemetry → Loki / Prometheus → Grafana.
+
+### HTTP Metrics (Prometheus)
+
+- Request rate (req/s) – total & per service
+- Average latency (ms) – total & per service
+- Error rate split by HTTP status class:
+    - `4xx` (client errors – bad request, auth failures)
+    - `5xx` (server errors – internal faults)
+- Per‑route metrics: rate, latency, error rate
+- Latency percentiles (p50, p95, p99) using histograms
+
+### Grafana Dashboards
+
+#### For Developers (three dashboards)
+
+| Dashboard | Purpose |
+|-----------|---------|
+| **Dev Metrics Dashboard** | Request rate, latency, error rate (4xx/5xx) by service & route; latency percentiles. |
+| **Dev All Logs Dashboard** | All JSON logs filtered by `app`, `layer` (main, http, service, repository, mysql) and `level` (DEBUG, INFO, WARN, ERROR). |
+| **Dev Request Logs Dashboard** | Filter logs by a specific `request_id` – trace a single transaction across services. |
+
+#### For Support (one dashboard)
+
+| Dashboard | Purpose |
+|-----------|---------|
+| **Support Logs Dashboard** | Simplified view: only `main`, `http`, `service` layers; only `INFO`, `WARN` levels. No DEBUG/ERROR noise. Supports `request_id` and `app` filters. |
+
+### Workflow with Dashboards
+
+1. Developer notices high error rate or latency in **Dev Metrics**.
+2. Opens **Dev Request Logs** with the failing `request_id` to see the full cross‑service trace.
+3. Dives into **Dev All Logs** for deeper debugging (e.g., repository or MySQL layer).
+4. If a user reports an issue, support looks up the `request_id` in **Support Logs** – minimal technical details, fast answer.
+
+All dashboard JSON definitions are versioned in the repository (see `grafana/` folder).
+
+---
+
 ## Future Improvements
 
 - Kubernetes deployment and Helm chart

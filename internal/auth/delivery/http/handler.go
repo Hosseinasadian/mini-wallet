@@ -3,8 +3,11 @@ package http
 import (
 	"github.com/gin-gonic/gin"
 	"github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
+	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
+	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/hosseinasadian/mini-wallet/pkg/user_access_token"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -12,38 +15,34 @@ import (
 type Handler struct {
 	authService *auth.Service
 	config      Config
+	logger      *logger.Logger
 }
 
 type Config struct {
 	JWTSecret string
 }
 
-func NewHandler(authService *auth.Service, config Config) Handler {
+func NewHandler(authService *auth.Service, config Config, logger *logger.Logger) Handler {
 	return Handler{
 		authService: authService,
 		config:      config,
+		logger:      logger,
 	}
 }
 
 func (h *Handler) LiveHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
-		"status": "alive",
-	})
+	c.Status(http.StatusOK)
 }
 
 func (h *Handler) ReadyHandler(c *gin.Context) {
-	err, code := h.authService.IsReady(c.Request.Context())
+	err := h.authService.IsReady(c.Request.Context())
 	if err != nil {
-		c.JSON(code, gin.H{
-			"ready":    false,
-			"response": err.Error(),
-		})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 		return
 	}
 
-	c.JSON(code, gin.H{
-		"ready": true,
-	})
+	c.Status(http.StatusOK)
 }
 
 // RegisterHandler @Summary      Register
@@ -61,22 +60,33 @@ func (h *Handler) ReadyHandler(c *gin.Context) {
 // @Failure      409              {object}  map[string]string
 // @Router       /register [post]
 func (h *Handler) RegisterHandler(c *gin.Context) {
+	deviceCtx := h.getDeviceContext(c)
+	ctxLogger := middleware.GetLoggerContext(c.Request.Context(), h.logger)
+
 	var req auth.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		ctxLogger.Warn("failed to register", "error", err)
+
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "invalid request",
 		})
 		return
 	}
 
-	deviceCtx := h.getDeviceContext(c)
-	response, err, code := h.authService.Register(c.Request.Context(), deviceCtx, req)
+	response, err := h.authService.Register(c.Request.Context(), deviceCtx, req)
 	if err != nil {
-		c.JSON(code, gin.H{
-			"message": err.Error(),
-		})
+		errRes := richerror.ErrHTTP(err)
+
+		if errRes.Code >= 500 {
+			ctxLogger.Error("failed to register", "error", err)
+		} else {
+			ctxLogger.Warn("failed to register", "error", err)
+		}
+
+		c.JSON(errRes.Code, errRes)
 	} else {
-		c.JSON(code, response)
+		ctxLogger.Info("user registered successfully")
+		c.JSON(response.Code, response.Data)
 	}
 }
 
@@ -95,22 +105,33 @@ func (h *Handler) RegisterHandler(c *gin.Context) {
 // @Failure      401              {object}  map[string]string
 // @Router       /login [post]
 func (h *Handler) LoginHandler(c *gin.Context) {
+	deviceCtx := h.getDeviceContext(c)
+	ctxLogger := middleware.GetLoggerContext(c.Request.Context(), h.logger)
+
 	var req auth.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		ctxLogger.Warn("filed to login", "error", err)
+
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "invalid request",
 		})
 		return
 	}
 
-	deviceCtx := h.getDeviceContext(c)
-	response, err, code := h.authService.Login(c.Request.Context(), deviceCtx, req)
+	response, err := h.authService.Login(c.Request.Context(), deviceCtx, req)
 	if err != nil {
-		c.JSON(code, gin.H{
-			"message": err.Error(),
-		})
+		errRes := richerror.ErrHTTP(err)
+
+		if errRes.Code >= 500 {
+			ctxLogger.Error("failed to login", "error", err)
+		} else {
+			ctxLogger.Warn("failed to login", "error", err)
+		}
+
+		c.JSON(errRes.Code, errRes)
 	} else {
-		c.JSON(code, response)
+		ctxLogger.Info("user logged in successfully")
+		c.JSON(response.Code, response.Data)
 	}
 }
 
@@ -144,13 +165,12 @@ func (h *Handler) RefreshTokenHandler(c *gin.Context) {
 	}
 
 	deviceCtx := h.getDeviceContext(c)
-	response, err, code := h.authService.RefreshToken(c.Request.Context(), deviceCtx, parts[1])
+	response, err := h.authService.RefreshToken(c.Request.Context(), deviceCtx, parts[1])
 	if err != nil {
-		c.JSON(code, gin.H{
-			"message": err.Error(),
-		})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 	} else {
-		c.JSON(code, response)
+		c.JSON(response.Code, response.Data)
 	}
 }
 
@@ -186,11 +206,17 @@ func (h *Handler) VerifyTokenHandler(c *gin.Context) {
 
 func (h *Handler) getDeviceContext(c *gin.Context) *auth.DeviceContext {
 	userAgent := middleware.GetUserAgent(c)
-	ipAddress := middleware.GetIPAddress(c)
+	ipString := middleware.GetIPAddress(c)
 	installationId := middleware.GetIdentity(c)
 	platform := middleware.GetPlatform(c)
 	deviceName := middleware.GetDeviceName(c)
 	appVersion := middleware.GetAppVersion(c)
+
+	ip := net.ParseIP(ipString)
+	var ipAddress []byte
+	if ip != nil {
+		ipAddress = ip.To16()
+	}
 
 	return &auth.DeviceContext{
 		UserAgent:      userAgent,
@@ -219,15 +245,14 @@ func (h *Handler) GetSessionsHandler(c *gin.Context) {
 
 	userID := middleware.GetUserId(c)
 
-	sessions, err, code := h.authService.GetUserSessions(c.Request.Context(), userID)
+	response, err := h.authService.GetUserSessions(c.Request.Context(), userID)
 	if err != nil {
-		c.JSON(code, gin.H{"message": err.Error()})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 		return
 	}
 
-	c.JSON(code, gin.H{
-		"sessions": sessions,
-	})
+	c.JSON(response.Code, response.Data)
 }
 
 // @Summary      Logout Session
@@ -254,7 +279,8 @@ func (h *Handler) LogoutSessionHandler(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 		return
 	}
 
@@ -285,7 +311,8 @@ func (h *Handler) LogoutAllSessionsHandler(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 		return
 	}
 
@@ -326,7 +353,8 @@ func (h *Handler) RevokeSessionHandler(c *gin.Context) {
 	)
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
 		return
 	}
 

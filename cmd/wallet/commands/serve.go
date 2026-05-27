@@ -1,13 +1,14 @@
 package commands
 
 import (
+	"context"
 	"errors"
-	"fmt"
 	"github.com/golang-migrate/migrate/v4"
 	walletApp "github.com/hosseinasadian/mini-wallet/internal/wallet"
-	"github.com/jmoiron/sqlx"
+	"github.com/hosseinasadian/mini-wallet/pkg/database"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/spf13/cobra"
-	"log"
 )
 
 var serveCmd = &cobra.Command{
@@ -21,23 +22,45 @@ var serveCmd = &cobra.Command{
 var migrateUp bool
 
 func serve() {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
+
+	shutdownTracer, err := pkgOtel.InitTracer(walletConfig.Otel)
+	if err != nil {
+		mainLogger.Fatal("failed to init tracer", "error", err)
+	}
+	defer func() {
+		if err := shutdownTracer(context.Background()); err != nil {
+			mainLogger.Warn("tracer shutdown failed", "error", err)
+		}
+	}()
+
+	mp, err := pkgOtel.InitMetrics(walletConfig.Otel)
+	if err != nil {
+		mainLogger.Fatal("failed to init metrics", "error", err)
+	}
+
+	dbLogger := logger.With("layer", string(pkgLogger.LayerMysql))
+	err = database.SetLogger(dbLogger)
+	if err != nil {
+		mainLogger.Fatal("failed to set logger", "error", err)
+	}
+
 	if migrateUp {
-		fmt.Println("Run migration up...")
+		mainLogger.Info("running migration up")
 		m := migrateDatabase()
 		if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
-			log.Fatalf("Up migration failed , err:%v\n", err)
+			mainLogger.Fatal("migration up failed", "error", err)
 		}
-		fmt.Println("Run migration up completed")
+		mainLogger.Info("migration up completed")
 	}
 
-	dsn := fmt.Sprintf("%s:%s@(%s:%d)/%s?parseTime=true", walletConfig.MainRepository.Username, walletConfig.MainRepository.Password, walletConfig.MainRepository.Host, walletConfig.MainRepository.Port, walletConfig.MainRepository.Database)
-	db, err := sqlx.Connect("mysql", dsn)
+	conn, err := database.Connect(&walletConfig.MainRepository)
 	if err != nil {
-		fmt.Printf("Connect config failed, err:%v\n", err)
-		log.Fatal("Connect config failed")
+		mainLogger.Fatal("database connection failed", "error", err)
 	}
+	defer database.Close(conn.DB)
 
-	app := walletApp.Setup(walletConfig, db)
+	app := walletApp.Setup(walletConfig, conn, logger, mp)
 	app.Start()
 }
 

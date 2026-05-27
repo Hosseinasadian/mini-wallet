@@ -9,10 +9,12 @@ import (
 	walletService "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
+	"github.com/hosseinasadian/mini-wallet/pkg/database"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
-	"github.com/jmoiron/sqlx"
 	amqp "github.com/rabbitmq/amqp091-go"
-	"log"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"os"
 	"os/signal"
 	"sync"
@@ -21,35 +23,49 @@ import (
 )
 
 type Config struct {
-	MainRepository               config.MySQL  `koanf:"mysql"`
-	HTTPPort                     int           `koanf:"http_port"`
-	Subscriber                   broker.Config `koanf:"subscriber"`
-	HTTPShutDownCtxTimeout       time.Duration `koanf:"http_shut_down_timeout"`
-	SubscriberShutdownCtxTimeout time.Duration `koanf:"subscriber_shutdown_timeout"`
+	MainRepository               config.MySQL   `koanf:"mysql"`
+	HTTPPort                     int            `koanf:"http_port"`
+	Subscriber                   broker.Config  `koanf:"subscriber"`
+	HTTPShutDownCtxTimeout       time.Duration  `koanf:"http_shut_down_timeout"`
+	SubscriberShutdownCtxTimeout time.Duration  `koanf:"subscriber_shutdown_timeout"`
+	Otel                         pkgOtel.Config `koanf:"otel"`
 }
 
 type Application struct {
 	config         Config
 	httpServer     *http.Server
 	userSubscriber broker.Subscriber
+	logger         *pkgLogger.Logger
 }
 
-func Setup(config Config, db *sqlx.DB) Application {
-	walletRepo := walletRepository.NewRepository(db)
-	walletSvc := walletService.NewService(walletRepo)
-	httpHandler := http.NewHandler(walletSvc)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler)
+func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
+
+	repoLogger := logger.With("layer", string(pkgLogger.LayerRepository))
+	walletRepo := walletRepository.NewRepository(conn.DB, repoLogger)
+
+	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
+	walletSvc := walletService.NewService(walletRepo, serviceLogger)
+
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
+	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
+	httpHandler := http.NewHandler(walletSvc, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	// rabbitMq
 	rbConn, err := rabbitmq.NewConnection(config.Subscriber.URL)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq connection filed", "error", err)
 	}
 	//defer rbConn.Close()
 
 	topology, err := rabbitmq.NewTopology(rbConn)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq topology filed", "error", err)
 	}
 	//defer topology.Close()
 
@@ -64,7 +80,7 @@ func Setup(config Config, db *sqlx.DB) Application {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq topology declared user topic failed", "error", err)
 	}
 
 	userSubscriber, err := rabbitmq.NewTopicSubscriber(
@@ -78,16 +94,16 @@ func Setup(config Config, db *sqlx.DB) Application {
 			HandlerTimeout: config.Subscriber.HandlerTimeout,
 
 			OnPanic: func(rec any, msg amqp.Delivery) {
-				log.Println("handler panic:", rec)
+				mainLogger.Error("rabbitmq panic recovered", "err", rec)
 			},
 
 			OnDLQFail: func(msgID string, body []byte, err error) {
-				log.Println("dlq publish failed:", err)
+				mainLogger.Error("dlq publish failed", "error", err)
 			},
 		},
 	)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq subscriber topic failed", "error", err)
 	}
 
 	//defer func() {
@@ -103,10 +119,13 @@ func Setup(config Config, db *sqlx.DB) Application {
 		config:         config,
 		httpServer:     httpServer,
 		userSubscriber: userSubscriber,
+		logger:         logger,
 	}
 }
 
 func (app Application) Start() {
+	logger := app.logger
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 	var wg sync.WaitGroup
 
 	stop := make(chan os.Signal, 1)
@@ -129,17 +148,15 @@ func (app Application) Start() {
 				return err
 			}
 
-			log.Println("RECEIVED:", evt.ID, evt.Email)
-
 			return nil
 		})
 
 		if err != nil {
-			log.Printf("Subscriber error: %v", err)
+			mainLogger.Error("user subscriber failed", "error", err)
 			return
 		}
 
-		log.Println("wallet consumer started")
+		mainLogger.Info("user subscriber started")
 	}()
 
 	wg.Add(1)
@@ -149,24 +166,24 @@ func (app Application) Start() {
 	}()
 
 	<-stop
-	log.Println("⚠️ Received shutdown signal, initiating graceful shutdown...")
+	mainLogger.Info("received shutdown signal, initiating graceful shutdown")
 
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), app.config.HTTPShutDownCtxTimeout)
 	defer httpCancel()
 
 	if err := app.httpServer.Stop(httpCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		mainLogger.Warn("http server stop failed", "error", err)
 	}
 
 	subCtx, subCancel := context.WithTimeout(context.Background(), app.config.SubscriberShutdownCtxTimeout)
 	defer subCancel()
 
 	if err := app.userSubscriber.Close(subCtx); err != nil {
-		log.Println(err)
+		mainLogger.Warn("device publisher close error", "error", err)
 	} else {
-		log.Println("user subscriber closed")
+		mainLogger.Info("device publisher closed")
 	}
 
 	wg.Wait()
-	log.Println("wallet app stopped")
+	mainLogger.Info("application stopped")
 }

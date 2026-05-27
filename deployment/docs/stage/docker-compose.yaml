@@ -11,6 +11,8 @@ services:
       - "5002"
     environment:
       ENV: stage
+      LOG_LEVEL: debug
+      GIN_MODE: release
     networks:
       - docker_wallet-network
     restart: unless-stopped

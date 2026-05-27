@@ -2,37 +2,51 @@ package wallet
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/hosseinasadian/mini-wallet/pkg/logger"
+	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"net/http"
 )
 
 type Service struct {
 	walletRepo Repository
+	logger     *logger.Logger
 }
 
-func NewService(walletRepo Repository) *Service {
+func NewService(walletRepo Repository, logger *logger.Logger) *Service {
 	return &Service{
 		walletRepo: walletRepo,
+		logger:     logger,
 	}
 }
 
-func (s *Service) IsReady(ctx context.Context) (error, int) {
+func (s *Service) IsReady(ctx context.Context) error {
+	const op richerror.Operation = "Service.IsReady"
+
 	wErr := s.walletRepo.Ping(ctx)
 	if wErr != nil {
-		return errors.New("wallet db down"), http.StatusServiceUnavailable
+		return richerror.New(op).
+			WithWrapper(wErr).
+			WithMessage("db down").
+			WithKind(richerror.KindUnavailable)
 	}
 
-	return nil, http.StatusOK
+	return nil
 }
 
 func (s *Service) Transfer(ctx context.Context, userId uint64, req TransferRequest) (*TransferResponse, error, int) {
+	const op richerror.Operation = "Service.Transfer"
+
 	operationId := uuid.New().String()
 	err := s.walletRepo.RunInTx(ctx, func(tx TxOps) error {
 		sourceBalance, err := tx.GetBalanceForUpdate(ctx, req.SourceId)
 		if err != nil {
-			return err
+			// log error
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrTransferFailed).
+				WithKind(richerror.KindInternal)
 		}
 
 		if sourceBalance < req.Amount {

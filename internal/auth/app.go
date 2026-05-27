@@ -8,9 +8,11 @@ import (
 	authService "github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
+	"github.com/hosseinasadian/mini-wallet/pkg/database"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
-	"github.com/jmoiron/sqlx"
-	"log"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"os"
 	"os/signal"
 	"sync"
@@ -24,6 +26,7 @@ type Config struct {
 	HTTPPort               int                `koanf:"http_port"`
 	Publisher              broker.Config      `koanf:"publisher"`
 	HTTPShutDownCtxTimeout time.Duration      `koanf:"http_shut_down_timeout"`
+	Otel                   pkgOtel.Config     `koanf:"otel"`
 }
 
 type Application struct {
@@ -32,10 +35,14 @@ type Application struct {
 	userPublisher         broker.TopicPublisher
 	notificationPublisher broker.DirectPublisher
 	devicePublisher       broker.TopicPublisher
+	logger                *pkgLogger.Logger
 }
 
-func Setup(config Config, db *sqlx.DB) Application {
-	authRepo := authRepository.NewRepository(db)
+func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
+
+	repoLogger := logger.With("layer", string(pkgLogger.LayerRepository))
+	authRepo := authRepository.NewRepository(conn.DB, repoLogger)
 
 	authSvcConfig := authService.Config{
 		JWTSecret:            config.AuthService.JWTSecret,
@@ -48,14 +55,14 @@ func Setup(config Config, db *sqlx.DB) Application {
 	// connection
 	rbConn, err := rabbitmq.NewConnection(config.Publisher.URL)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq connection failed", "error", err)
 	}
 	//defer rbConn.Close()
 
 	// topology
 	topicTopology, err := rabbitmq.NewTopology(rbConn)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq topic topology failed", "error", err)
 	}
 	//defer topicTopology.Close()
 
@@ -70,7 +77,7 @@ func Setup(config Config, db *sqlx.DB) Application {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq user topic failed", "error", err)
 	}
 
 	err = topicTopology.DeclareTopic(rabbitmq.TopicTopologyConfig{
@@ -84,12 +91,12 @@ func Setup(config Config, db *sqlx.DB) Application {
 		},
 	})
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq device topic failed", "error", err)
 	}
 
 	directTopology, err := rabbitmq.NewTopology(rbConn)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq direct topology failed", "error", err)
 	}
 	//defer directTopology.Close()
 
@@ -98,34 +105,41 @@ func Setup(config Config, db *sqlx.DB) Application {
 		RetryTTL:  config.Publisher.RetryTTL,
 	})
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq notification event failed", "error", err)
 	}
 
 	// publisher
 	userPublisher, err := rabbitmq.NewTopicPublisher(rbConn, "user")
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq user publisher failed", "error", err)
 	}
 	//defer userPublisher.Close()
 
 	notificationPublisher, err := rabbitmq.NewDirectPublisher(rbConn, "notification")
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq notification publisher failed", "error", err)
 	}
 	//defer notificationPublisher.Close()
 
 	devicePublisher, err := rabbitmq.NewTopicPublisher(rbConn, "device")
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq device publisher failed", "error", err)
 	}
 	//defer devicePublisher.Close()
 
-	authSvc := authService.NewService(authRepo, authRepo, authSvcConfig, userPublisher, notificationPublisher)
+	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
+	authSvc := authService.NewService(authRepo, authRepo, authSvcConfig, userPublisher, notificationPublisher, serviceLogger)
 
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
+	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
 	httpHandler := http.NewHandler(authSvc, http.Config{
 		JWTSecret: config.AuthService.JWTSecret,
-	})
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret)
+	}, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	return Application{
 		config:                config,
@@ -133,14 +147,19 @@ func Setup(config Config, db *sqlx.DB) Application {
 		userPublisher:         userPublisher,
 		notificationPublisher: notificationPublisher,
 		devicePublisher:       devicePublisher,
+		logger:                logger,
 	}
 }
 
 func (app Application) Start() {
+	logger := app.logger
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 	var wg sync.WaitGroup
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	mainLogger.Info("starting application")
 
 	wg.Add(1)
 	go func() {
@@ -149,33 +168,33 @@ func (app Application) Start() {
 	}()
 
 	<-stop
-	log.Println("⚠️ Received shutdown signal, initiating graceful shutdown...")
+	mainLogger.Info("received shutdown signal, initiating graceful shutdown")
 
 	httpCtx, httpCancel := context.WithTimeout(context.Background(), app.config.HTTPShutDownCtxTimeout)
 	defer httpCancel()
 
 	if err := app.httpServer.Stop(httpCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		mainLogger.Warn("http server stop failed", "error", err)
 	}
 
 	if err := app.userPublisher.Close(); err != nil {
-		log.Println(err)
+		mainLogger.Warn("user publisher close error", "error", err)
 	} else {
-		log.Println("user publisher closed")
+		mainLogger.Info("user publisher closed")
 	}
 
 	if err := app.notificationPublisher.Close(); err != nil {
-		log.Println(err)
+		mainLogger.Warn("notification publisher close error", "error", err)
 	} else {
-		log.Println("notification publisher closed")
+		mainLogger.Info("notification publisher closed")
 	}
 
 	if err := app.devicePublisher.Close(); err != nil {
-		log.Println(err)
+		mainLogger.Warn("device publisher close error", "error", err)
 	} else {
-		log.Println("device publisher closed")
+		mainLogger.Info("device publisher closed")
 	}
 
 	wg.Wait()
-	log.Println("auth app stopped")
+	mainLogger.Info("application stopped")
 }

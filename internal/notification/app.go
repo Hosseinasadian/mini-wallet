@@ -8,11 +8,14 @@ import (
 	"github.com/hosseinasadian/mini-wallet/internal/notification/service/notification"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/hub"
+	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/one_signal"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
 	"github.com/hosseinasadian/mini-wallet/pkg/redis"
 	"github.com/hosseinasadian/mini-wallet/pkg/sender"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"log"
 	"os"
 	"os/signal"
@@ -30,6 +33,7 @@ type Config struct {
 	Subscriber                   broker.Config       `koanf:"subscriber"`
 	SubscriberShutdownCtxTimeout time.Duration       `koanf:"subscriber_shutdown_timeout"`
 	Sender                       sender.Config       `koanf:"sender"`
+	Otel                         pkgOtel.Config      `koanf:"otel"`
 }
 
 type Sender interface {
@@ -42,20 +46,22 @@ type Application struct {
 	notificationSubscriber broker.Subscriber
 	hub                    *hub.Hub
 	sender                 Sender
+	logger                 *pkgLogger.Logger
 }
 
-func Setup(config Config, redisAdapter *redis.Redis) Application {
+func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 
 	// rabbitMq
 	rbConn, err := rabbitmq.NewConnection(config.Subscriber.URL)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq connection failed", "error", err)
 	}
 	//defer rbConn.Close()
 
 	topology, err := rabbitmq.NewTopology(rbConn)
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq topology failed", "error", err)
 	}
 	//defer topology.Close()
 
@@ -64,17 +70,24 @@ func Setup(config Config, redisAdapter *redis.Redis) Application {
 		RetryTTL:  config.Subscriber.RetryTTL,
 	})
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq notification event failed", "error", err)
 	}
 
-	notificationSvc := notification.NewService(config.NotificationService, redisAdapter)
+	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
+	notificationSvc := notification.NewService(config.NotificationService, redisAdapter, serviceLogger)
 	notificationHub := hub.NewHub(redisAdapter)
 
 	repo := one_signal.FakeRepo{}
 	senderOneSignal := one_signal.NewOneSignalSender(config.Sender.OneSignal, &repo)
 
-	httpHandler := http.NewHandler(notificationSvc, notificationHub)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.JWTSecret)
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
+	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
+	httpHandler := http.NewHandler(notificationSvc, notificationHub, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	notificationSubscriber, err := rabbitmq.NewDirectSubscriber(
 		rbConn,
@@ -96,17 +109,21 @@ func Setup(config Config, redisAdapter *redis.Redis) Application {
 	)
 
 	if err != nil {
-		log.Fatal(err)
+		mainLogger.Fatal("rabbitmq subscriber failed", "error", err)
 	}
 
-	return Application{config: config, httpServer: httpServer, notificationSubscriber: notificationSubscriber, hub: notificationHub, sender: senderOneSignal}
+	return Application{config: config, httpServer: httpServer, notificationSubscriber: notificationSubscriber, hub: notificationHub, sender: senderOneSignal, logger: logger}
 }
 
 func (app Application) Start() {
+	logger := app.logger
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 	var wg sync.WaitGroup
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	mainLogger.Info("starting application")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -140,14 +157,14 @@ func (app Application) Start() {
 				return err
 			}
 
-			log.Println("RECEIVED:", evt.Message, evt.UserID)
+			mainLogger.Info("received message", "body", evt.Message, "user_id", evt.UserID)
 
 			userIdStr := fmt.Sprintf("%d", evt.UserID)
 			if app.hub.IsOnline(userIdStr) {
 				app.hub.Publish(userIdStr, evt.Message)
 			} else {
 				if err := app.sender.Send(ctx, userIdStr, "new notification", evt.Message); err != nil {
-					log.Printf("push notification error: %v", err)
+					mainLogger.Error("send notification failed", "error", err)
 				}
 			}
 
@@ -155,11 +172,11 @@ func (app Application) Start() {
 		})
 
 		if err != nil {
-			log.Printf("Subscriber error: %v", err)
+			mainLogger.Error("subscribe failed", "error", err)
 			return
 		}
 
-		log.Println("notification consumer started")
+		mainLogger.Info("subscribe done")
 	}()
 
 	wg.Add(1)
@@ -169,26 +186,26 @@ func (app Application) Start() {
 	}()
 
 	<-stop
-	log.Println("⚠️ Received shutdown signal, initiating graceful shutdown...")
+	mainLogger.Info("received shutdown signal, initiating graceful shutdown")
 
 	httpCtx, httpCancel := context.WithTimeout(ctx, app.config.HTTPShutDownCtxTimeout)
 	defer httpCancel()
 
 	if err := app.httpServer.Stop(httpCtx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		mainLogger.Warn("http server stop failed", "error", err)
 	}
 
 	subCtx, subCancel := context.WithTimeout(ctx, app.config.SubscriberShutdownCtxTimeout)
 	defer subCancel()
 
 	if err := app.notificationSubscriber.Close(subCtx); err != nil {
-		log.Println(err)
+		mainLogger.Warn("notification publisher close error", "error", err)
 	} else {
-		log.Println("notification subscriber closed")
+		mainLogger.Info("notification publisher closed")
 	}
 
 	app.hub.Close()
 
 	wg.Wait()
-	log.Println("notification app stopped")
+	mainLogger.Info("application stopped")
 }

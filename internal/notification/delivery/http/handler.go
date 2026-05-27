@@ -6,19 +6,20 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hosseinasadian/mini-wallet/internal/notification/service/notification"
 	"github.com/hosseinasadian/mini-wallet/pkg/hub"
+	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
 	"io"
-	"log"
 	"net/http"
 )
 
 type Handler struct {
 	notificationService *notification.Service
 	notificationHub     *hub.Hub
+	logger              *logger.Logger
 }
 
-func NewHandler(notificationService *notification.Service, notificationHub *hub.Hub) Handler {
-	return Handler{notificationService: notificationService, notificationHub: notificationHub}
+func NewHandler(notificationService *notification.Service, notificationHub *hub.Hub, logger *logger.Logger) Handler {
+	return Handler{notificationService: notificationService, notificationHub: notificationHub, logger: logger}
 }
 
 func (h *Handler) LiveHandler(c *gin.Context) {
@@ -30,7 +31,6 @@ func (h *Handler) LiveHandler(c *gin.Context) {
 func (h *Handler) ReadyHandler(c *gin.Context) {
 	err, code := h.notificationService.IsReady(c.Request.Context())
 	if err != nil {
-		log.Printf("Ready check failed: %v", err)
 		c.JSON(code, gin.H{
 			"ready":    false,
 			"response": err.Error(),

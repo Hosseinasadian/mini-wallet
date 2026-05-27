@@ -11,3 +11,8 @@ swagger:
   notification:
     host: "localhost:180/notification"
     schemes: "http"
+
+otel:
+  service_name: "docs"
+  environment: "stage"
+  endpoint: "mini_wallet-otel-collector:4317"

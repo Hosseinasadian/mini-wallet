@@ -1,0 +1,23 @@
+services:
+  mini_wallet-tempo:
+    image: grafana/tempo:2.4.0
+    container_name: mini_wallet-tempo
+    ports:
+      - "3230:3200"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./deployment/infrastructure/stage/tempo/tempo.yaml:/etc/tempo.yaml
+      - mini_wallet-tempo-data:/var/tempo
+
+volumes:
+  mini_wallet-tempo-data:
+
+networks:
+  docker_wallet-network:
+    external: true
