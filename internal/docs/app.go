@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/hosseinasadian/mini-wallet/internal/docs/delivery/http"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"os"
 	"os/signal"
 	"sync"
@@ -16,6 +18,7 @@ type Config struct {
 	HTTPPort               int               `koanf:"http_port"`
 	HTTPShutDownCtxTimeout time.Duration     `koanf:"http_shut_down_timeout"`
 	Swagger                http.RoutesConfig `koanf:"swagger"`
+	Otel                   pkgOtel.Config    `koanf:"otel"`
 }
 
 type Application struct {
@@ -24,10 +27,17 @@ type Application struct {
 	logger     *pkgLogger.Logger
 }
 
-func Setup(config Config, logger *pkgLogger.Logger) Application {
+func Setup(config Config, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
+	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
+
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
 	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
 	httpHandler := http.NewHandler(httpLogger)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.Swagger, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.Swagger, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	return Application{
 		config:     config,

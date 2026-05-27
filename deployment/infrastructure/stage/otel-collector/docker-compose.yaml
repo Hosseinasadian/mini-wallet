@@ -1,0 +1,21 @@
+services:
+  mini_wallet-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.99.0
+    container_name: mini_wallet-otel-collector
+    ports:
+      - "8317:4317"
+      - "8318:4318"
+      - "18889:8889"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    command: ["--config=/etc/otel-collector.yaml"]
+    volumes:
+      - ./deployment/infrastructure/stage/otel-collector/otel-collector.yaml:/etc/otel-collector.yaml
+
+networks:
+  docker_wallet-network:
+    external: true

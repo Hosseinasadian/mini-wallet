@@ -11,8 +11,10 @@ import (
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/database"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"os"
 	"os/signal"
 	"sync"
@@ -21,11 +23,12 @@ import (
 )
 
 type Config struct {
-	MainRepository               config.MySQL  `koanf:"mysql"`
-	HTTPPort                     int           `koanf:"http_port"`
-	Subscriber                   broker.Config `koanf:"subscriber"`
-	HTTPShutDownCtxTimeout       time.Duration `koanf:"http_shut_down_timeout"`
-	SubscriberShutdownCtxTimeout time.Duration `koanf:"subscriber_shutdown_timeout"`
+	MainRepository               config.MySQL   `koanf:"mysql"`
+	HTTPPort                     int            `koanf:"http_port"`
+	Subscriber                   broker.Config  `koanf:"subscriber"`
+	HTTPShutDownCtxTimeout       time.Duration  `koanf:"http_shut_down_timeout"`
+	SubscriberShutdownCtxTimeout time.Duration  `koanf:"subscriber_shutdown_timeout"`
+	Otel                         pkgOtel.Config `koanf:"otel"`
 }
 
 type Application struct {
@@ -35,7 +38,7 @@ type Application struct {
 	logger         *pkgLogger.Logger
 }
 
-func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger) Application {
+func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
 	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 
 	repoLogger := logger.With("layer", string(pkgLogger.LayerRepository))
@@ -44,9 +47,14 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger) App
 	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
 	walletSvc := walletService.NewService(walletRepo, serviceLogger)
 
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
 	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
 	httpHandler := http.NewHandler(walletSvc, httpLogger)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	// rabbitMq
 	rbConn, err := rabbitmq.NewConnection(config.Subscriber.URL)

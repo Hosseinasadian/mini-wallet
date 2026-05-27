@@ -12,3 +12,8 @@ subscriber:
   max_retry: 3
   prefetch_count: 10
   handler_timeout: "10s"
+
+otel:
+  service_name: "wallet"
+  environment: "stage"
+  endpoint: "mini_wallet-otel-collector:4317"

@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["mini_wallet-otel-collector:8889"]
+
+#  - job_name: mini-wallet-services
+#    static_configs:
+#      - targets:
+#          - "mini_wallet-auth:9090"
+#          - "mini_wallet-wallet:9090"
+#          - "mini_wallet-notification:9090"
+#          - "mini_wallet-docs:9090"

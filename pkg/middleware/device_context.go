@@ -5,6 +5,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hosseinasadian/mini-wallet/pkg/logger"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type contextKey string
@@ -66,11 +67,21 @@ func GetPath(ctx context.Context) string {
 }
 
 func getLoggerArguments(ctx context.Context) []any {
-	return []any{
+	args := []any{
 		"request_id", GetCorrelationID(ctx),
 		"ip_address", GetIPAddress(ctx),
 		"path", GetPath(ctx),
 	}
+
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		args = append(args,
+			"trace_id", span.SpanContext().TraceID().String(),
+			"span_id", span.SpanContext().SpanID().String(),
+		)
+	}
+
+	return args
 }
 
 func GetLoggerContext(ctx context.Context, defaultLogger *logger.Logger) *logger.Logger {

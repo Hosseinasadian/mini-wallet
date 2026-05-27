@@ -10,6 +10,7 @@ import (
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	stdhttp "net/http"
 	"strings"
 	"time"
@@ -22,22 +23,26 @@ type RoutesConfig struct {
 }
 
 type Server struct {
-	engine     *gin.Engine
-	addr       string
-	handler    Handler
-	httpServer *stdhttp.Server
-	routes     RoutesConfig
-	logger     *logger.Logger
+	engine      *gin.Engine
+	addr        string
+	handler     Handler
+	httpServer  *stdhttp.Server
+	serviceName string
+	routes      RoutesConfig
+	logger      *logger.Logger
+	metrics     *pkgOtel.HTTPMetrics
 }
 
-func NewServer(addr string, handler Handler, routes RoutesConfig, logger *logger.Logger) *Server {
+func NewServer(addr string, handler Handler, routes RoutesConfig, serviceName string, logger *logger.Logger, metrics *pkgOtel.HTTPMetrics) *Server {
 
 	s := &Server{
-		engine:  gin.New(),
-		addr:    addr,
-		handler: handler,
-		routes:  routes,
-		logger:  logger,
+		engine:      gin.New(),
+		addr:        addr,
+		handler:     handler,
+		routes:      routes,
+		logger:      logger,
+		serviceName: serviceName,
+		metrics:     metrics,
 	}
 
 	s.httpServer = &stdhttp.Server{
@@ -55,7 +60,11 @@ func NewServer(addr string, handler Handler, routes RoutesConfig, logger *logger
 
 func (s *Server) setRoutes() {
 	r := s.engine
-	r.Use(middleware.GinSlogLogger(s.logger), middleware.GinSlogRecovery(s.logger))
+	r.Use(
+		middleware.OtelMiddleware(s.serviceName),
+		middleware.GinSlogLogger(s.logger, s.metrics),
+		middleware.GinSlogRecovery(s.logger),
+	)
 
 	r.GET("/live", s.handler.LiveHandler)
 	r.GET("/ready", s.handler.ReadyHandler)

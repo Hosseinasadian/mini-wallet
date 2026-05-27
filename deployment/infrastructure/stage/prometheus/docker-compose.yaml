@@ -1,0 +1,26 @@
+services:
+  mini_wallet-prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: mini_wallet-prometheus
+    ports:
+      - "18090:9090"
+    profiles:
+      - infrastructure
+      - stage
+    restart: unless-stopped
+    networks:
+      - docker_wallet-network
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+    volumes:
+      - ./deployment/infrastructure/stage/prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml
+      - mini_wallet-prometheus-data:/prometheus
+
+volumes:
+  mini_wallet-prometheus-data:
+
+networks:
+  docker_wallet-network:
+    external: true

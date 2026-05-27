@@ -10,10 +10,12 @@ import (
 	"github.com/hosseinasadian/mini-wallet/pkg/hub"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/one_signal"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
 	"github.com/hosseinasadian/mini-wallet/pkg/redis"
 	"github.com/hosseinasadian/mini-wallet/pkg/sender"
 	amqp "github.com/rabbitmq/amqp091-go"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"log"
 	"os"
 	"os/signal"
@@ -31,6 +33,7 @@ type Config struct {
 	Subscriber                   broker.Config       `koanf:"subscriber"`
 	SubscriberShutdownCtxTimeout time.Duration       `koanf:"subscriber_shutdown_timeout"`
 	Sender                       sender.Config       `koanf:"sender"`
+	Otel                         pkgOtel.Config      `koanf:"otel"`
 }
 
 type Sender interface {
@@ -46,7 +49,7 @@ type Application struct {
 	logger                 *pkgLogger.Logger
 }
 
-func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger) Application {
+func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
 	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 
 	// rabbitMq
@@ -77,9 +80,14 @@ func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger) A
 	repo := one_signal.FakeRepo{}
 	senderOneSignal := one_signal.NewOneSignalSender(config.Sender.OneSignal, &repo)
 
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
 	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
 	httpHandler := http.NewHandler(notificationSvc, notificationHub, httpLogger)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.JWTSecret, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	notificationSubscriber, err := rabbitmq.NewDirectSubscriber(
 		rbConn,

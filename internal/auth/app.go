@@ -10,7 +10,9 @@ import (
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/database"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"os"
 	"os/signal"
 	"sync"
@@ -24,6 +26,7 @@ type Config struct {
 	HTTPPort               int                `koanf:"http_port"`
 	Publisher              broker.Config      `koanf:"publisher"`
 	HTTPShutDownCtxTimeout time.Duration      `koanf:"http_shut_down_timeout"`
+	Otel                   pkgOtel.Config     `koanf:"otel"`
 }
 
 type Application struct {
@@ -35,7 +38,7 @@ type Application struct {
 	logger                *pkgLogger.Logger
 }
 
-func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger) Application {
+func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
 	mainLogger := logger.With("layer", string(pkgLogger.LayerMain))
 
 	repoLogger := logger.With("layer", string(pkgLogger.LayerRepository))
@@ -127,11 +130,16 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger) App
 	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
 	authSvc := authService.NewService(authRepo, authRepo, authSvcConfig, userPublisher, notificationPublisher, serviceLogger)
 
+	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create http metrics", "error", err)
+	}
+
 	httpLogger := logger.With("layer", string(pkgLogger.LayerHTTP))
 	httpHandler := http.NewHandler(authSvc, http.Config{
 		JWTSecret: config.AuthService.JWTSecret,
 	}, httpLogger)
-	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret, httpLogger)
+	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
 	return Application{
 		config:                config,
