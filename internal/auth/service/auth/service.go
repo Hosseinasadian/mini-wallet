@@ -2,37 +2,25 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"github.com/hosseinasadian/mini-wallet/pkg/broker"
+	"fmt"
+	"github.com/google/uuid"
+	authpb "github.com/hosseinasadian/mini-wallet/gen/go/auth/v1"
+	"github.com/hosseinasadian/mini-wallet/internal/auth/service/outbox"
+	"github.com/hosseinasadian/mini-wallet/pkg/event"
+	"google.golang.org/protobuf/proto"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/hosseinasadian/mini-wallet/pkg/httpresponse"
 	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/middleware"
 	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/hosseinasadian/mini-wallet/pkg/user_access_token"
 	"golang.org/x/crypto/bcrypt"
-	"log"
-	"net/http"
-	"regexp"
-	"strconv"
-	"strings"
-	"time"
 )
-
-type UserRepository interface {
-	CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error)
-	GetUserByEmail(ctx context.Context, email string) (*User, error)
-	Ping(ctx context.Context) error
-}
-
-type TokenRepository interface {
-	UpsertSession(ctx context.Context, deviceCtx *DeviceContext, userID int64, refreshTokenHash string, expiresAt time.Time) (string, string, error)
-	RotateRefreshToken(ctx context.Context, deviceCtx *DeviceContext, oldRefreshTokenHash string, newRefreshTokenHash string, newExpiresAt time.Time) (string, string, int64, error)
-	GetUserSessions(ctx context.Context, userID int64) ([]SessionItem, error)
-	RevokeSession(ctx context.Context, userID int64, sessionPublicID string, reason string, revokedBy string) error
-	RevokeAllSessions(ctx context.Context, userID int64, exceptSessionID *string, reason string, revokedBy string) error
-	Ping(ctx context.Context) error
-}
 
 type Config struct {
 	JWTSecret            string        `koanf:"jwt_secret"`
@@ -41,49 +29,35 @@ type Config struct {
 	EmailRegexp          string        `koanf:"email_regexp"`
 }
 
-type UserEv struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-}
-
-type LoginEv struct {
-	Message string `json:"message"`
-	UserID  int64  `json:"user_id"`
-}
-
 type Service struct {
-	userRepo              UserRepository
-	tokenRepo             TokenRepository
-	config                Config
-	userPublisher         broker.TopicPublisher
-	notificationPublisher broker.DirectPublisher
-	emailRegex            *regexp.Regexp
-	logger                *logger.Logger
+	repo       RepositoryTx
+	config     Config
+	emailRegex *regexp.Regexp
+	logger     *logger.Logger
+	outbox     *outbox.Service
 }
 
-func NewService(userRepo UserRepository, tokenRepo TokenRepository, config Config, userPublisher broker.TopicPublisher, notificationPublisher broker.DirectPublisher, logger *logger.Logger) *Service {
+func NewService(repo RepositoryTx, config Config, outbox *outbox.Service, logger *logger.Logger) *Service {
 	return &Service{
-		userRepo:              userRepo,
-		tokenRepo:             tokenRepo,
-		config:                config,
-		userPublisher:         userPublisher,
-		notificationPublisher: notificationPublisher,
-		emailRegex:            regexp.MustCompile(config.EmailRegexp),
-		logger:                logger,
+		repo:       repo,
+		config:     config,
+		emailRegex: regexp.MustCompile(config.EmailRegexp),
+		logger:     logger,
+		outbox:     outbox,
 	}
 }
 
 func (s *Service) IsReady(ctx context.Context) error {
 	const op richerror.Operation = "auth.IsReady"
 
-	urErr := s.userRepo.Ping(ctx)
+	urErr := s.repo.Ping(ctx)
 	if urErr != nil {
 		return richerror.New(op).
 			WithWrapper(urErr).
 			WithMessage("db down").
 			WithKind(richerror.KindUnavailable)
 	}
-	trErr := s.tokenRepo.Ping(ctx)
+	trErr := s.repo.Ping(ctx)
 	if trErr != nil {
 		return richerror.New(op).
 			WithWrapper(urErr).
@@ -132,84 +106,137 @@ func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req Re
 	}
 
 	var accountId int64
-	accountId, err = s.userRepo.CreateUserByEmailAndPassword(ctx, req.Email, string(hashedPassword))
-	if err != nil {
-		var re *richerror.RichError
-		if errors.As(err, &re) && re.Kind() == richerror.KindConflict {
-			ctxLogger.Warn("duplicate email registration", "email", maskEmail(req.Email))
+	var accessToken, refreshToken, deviceID, sessionID string
+	var registerEventBody []byte
+	var outboxEvent *outbox.OutboxEvent
 
-			return nil, richerror.New(op).
-				WithWrapper(re).
-				WithMessage(ErrEmailAlreadyExists).
-				WithKind(richerror.KindConflict)
+	tErr := s.repo.RunInTx(ctx, func(exec Repository) error {
+		accountId, err = exec.CreateUserByEmailAndPassword(ctx, req.Email, string(hashedPassword))
+		if err != nil {
+			var re *richerror.RichError
+			if errors.As(err, &re) && re.Kind() == richerror.KindConflict {
+				ctxLogger.Warn("duplicate email registration", "email", maskEmail(req.Email))
+
+				return richerror.New(op).
+					WithWrapper(re).
+					WithMessage(ErrEmailAlreadyExists).
+					WithKind(richerror.KindConflict)
+			}
+
+			ctxLogger.Error("user creation failed", "error", err)
+
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
 		}
 
-		ctxLogger.Error("user creation failed", "error", err)
+		refreshToken, err = generateRefreshToken()
+		if err != nil {
+			ctxLogger.Error("refresh token generation failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
 
+		newToken := hashRefreshToken(refreshToken)
+		expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
+
+		deviceID, sessionID, err = exec.UpsertSession(
+			ctx,
+			deviceCtx,
+			accountId,
+			newToken,
+			expireRefreshToken,
+			req.PushToken,
+		)
+		if err != nil {
+			ctxLogger.Error("session upsert failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		accessToken, err = user_access_token.GenerateAccessToken(accountId, sessionID, s.config.JWTSecret, s.config.AccessTokenDuration)
+		if err != nil {
+			ctxLogger.Error("access token generation failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		// publish event
+		newRegisterEvent := &authpb.RegisterNewUser{
+			Id:    accountId,
+			Email: req.Email,
+		}
+		registerToCommon, err := event.New(newRegisterEvent, event.TypeAuthRegisterNewUser)
+
+		if err != nil {
+			s.logger.Error("failed to create register event", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		registerEventBody, err = proto.Marshal(registerToCommon)
+		if err != nil {
+			ctxLogger.Error("event marshaling failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		outboxEvent = &outbox.OutboxEvent{
+			EventID:       uuid.New().String(),
+			EventType:     string(event.TypeAuthRegisterNewUser),
+			Payload:       registerEventBody,
+			AggregateType: "user",
+			AggregateID:   fmt.Sprintf("%d", accountId),
+			CreatedAt:     time.Now(),
+		}
+
+		err = exec.InsertOutboxEvent(ctx, outboxEvent)
+		if err != nil {
+			ctxLogger.Error("event insert failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRegisterFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		return nil
+	})
+
+	if tErr != nil {
 		return nil, richerror.New(op).
-			WithWrapper(err).
+			WithWrapper(tErr).
 			WithMessage(ErrRegisterFailed).
 			WithKind(richerror.KindInternal)
 	}
 
 	ctxLogger.Info("user created successfully", "account_id", accountId, "email", maskEmail(req.Email))
 
-	refreshToken, err := generateRefreshToken()
-	if err != nil {
-		ctxLogger.Error("refresh token generation failed", "error", err)
-		return httpresponse.New(http.StatusCreated, &RegisterResponse{
-			Message: "account created but login failed, please login manually",
-		}), nil
-	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("panic in outbox immediate publisher", "recover", r)
+			}
+		}()
 
-	newToken := hashRefreshToken(refreshToken)
-	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
+		bgCtx := context.Background()
 
-	deviceID, sessionID, err := s.tokenRepo.UpsertSession(
-		ctx,
-		deviceCtx,
-		accountId,
-		newToken,
-		expireRefreshToken,
-	)
-	if err != nil {
-		ctxLogger.Error("session upsert failed", "error", err)
-		return httpresponse.New(http.StatusCreated, httpresponse.Response{
-			Code: http.StatusCreated,
-			Data: &RegisterResponse{
-				Message: "account created but login failed, please login manually",
-			},
-		}), nil
-	}
+		err = s.outbox.ProcessSingleEvent(bgCtx, outboxEvent)
 
-	var accessToken string
-	accessToken, err = user_access_token.GenerateAccessToken(accountId, sessionID, s.config.AccessTokenDuration)
-	if err != nil {
-		ctxLogger.Error("access token generation failed", "error", err)
-		return httpresponse.New(http.StatusCreated, &RegisterResponse{
-			Message: "account created but login failed, please login manually",
-		}), nil
-	}
-
-	// publish event
-	eventBody, mErr := json.Marshal(UserEv{
-		ID:    strconv.FormatInt(accountId, 10),
-		Email: req.Email,
-	})
-	if mErr == nil {
-		err = s.userPublisher.Publish(
-			context.Background(),
-			"user.created",
-			eventBody,
-		)
 		if err != nil {
-			ctxLogger.Warn("event publish failed", "error", err, "event", "user.created")
-		} else {
-			ctxLogger.Info("event published successfully", "event", "user.created", "account_id", accountId)
+			s.logger.Error("outbox single event process failed", "error", err)
 		}
-	} else {
-		ctxLogger.Warn("event marshaling failed", "error", mErr)
-	}
+	}()
 
 	return httpresponse.New(http.StatusCreated, &RegisterResponse{
 		Message:      "account successfully created",
@@ -222,6 +249,7 @@ func (s *Service) Register(ctx context.Context, deviceCtx *DeviceContext, req Re
 
 func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req LoginRequest) (*httpresponse.Response, error) {
 	const op richerror.Operation = "auth.Login"
+	ctxLogger := middleware.GetLoggerContext(ctx, s.logger)
 
 	// validation
 	vErr := richerror.New(op).
@@ -240,7 +268,7 @@ func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req Login
 		return nil, vErr
 	}
 
-	user, err := s.userRepo.GetUserByEmail(ctx, req.Email)
+	user, err := s.repo.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		var re *richerror.RichError
 		if errors.As(err, &re) && re.Kind() == richerror.KindNotFound {
@@ -264,49 +292,109 @@ func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req Login
 			WithKind(richerror.KindUnauthorized)
 	}
 
-	refreshToken, err := generateRefreshToken()
-	if err != nil {
-		return nil, richerror.New(op).
-			WithWrapper(err).
-			WithMessage(ErrRefreshTokenFailed).
-			WithKind(richerror.KindInternal)
-	}
+	var accessToken, refreshToken, deviceID, sessionID string
+	var outboxEvent *outbox.OutboxEvent
+	var newLoggedEventBody []byte
 
-	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
-	newToken := hashRefreshToken(refreshToken)
-	deviceID, sessionID, err := s.tokenRepo.UpsertSession(
-		ctx,
-		deviceCtx,
-		user.ID,
-		newToken,
-		expireRefreshToken,
-	)
-
-	accessToken, err := user_access_token.GenerateAccessToken(user.ID, sessionID, s.config.AccessTokenDuration)
-	if err != nil {
-		return nil, richerror.New(op).
-			WithWrapper(err).
-			WithMessage(ErrAccessTokenFailed).
-			WithKind(richerror.KindInternal)
-	}
-
-	// publish event
-	lEventBody, lErr := json.Marshal(LoginEv{
-		Message: "New user logged in at " + time.Now().Format(time.RFC3339),
-		UserID:  user.ID,
-	})
-	if lErr == nil {
-		lErr = s.notificationPublisher.Publish(
-			context.Background(),
-			lEventBody,
-		)
-		if lErr != nil {
-			log.Println(lErr)
-		} else {
-			log.Println("Successfully sent event", string(lEventBody))
+	tErr := s.repo.RunInTx(ctx, func(exec Repository) error {
+		refreshToken, err = generateRefreshToken()
+		if err != nil {
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrRefreshTokenFailed).
+				WithKind(richerror.KindInternal)
 		}
+
+		expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
+		newToken := hashRefreshToken(refreshToken)
+		deviceID, sessionID, err = exec.UpsertSession(
+			ctx,
+			deviceCtx,
+			user.ID,
+			newToken,
+			expireRefreshToken,
+			req.PushToken,
+		)
+
+		accessToken, err = user_access_token.GenerateAccessToken(user.ID, sessionID, s.config.JWTSecret, s.config.AccessTokenDuration)
+		if err != nil {
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrAccessTokenFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		// publish event
+		newLoggedEvent := &authpb.NewSessionLoggedIn{
+			Id:     sessionID,
+			UserId: user.ID,
+		}
+		newLoggedToCommon, err := event.New(newLoggedEvent, event.TypeAuthNewSessionLoggedIn)
+
+		if err != nil {
+			s.logger.Error("failed to create new logged event", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrLoginFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		newLoggedEventBody, err = proto.Marshal(newLoggedToCommon)
+		if err != nil {
+			ctxLogger.Warn("event marshaling failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrLoginFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		outboxEvent = &outbox.OutboxEvent{
+			EventID:       uuid.New().String(),
+			EventType:     string(event.TypeAuthNewSessionLoggedIn),
+			Payload:       newLoggedEventBody,
+			AggregateType: "user",
+			AggregateID:   fmt.Sprintf("%d", user.ID),
+			CreatedAt:     time.Now(),
+		}
+
+		err = exec.InsertOutboxEvent(ctx, outboxEvent)
+		if err != nil {
+			ctxLogger.Error("event insert failed", "error", err)
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage(ErrLoginFailed).
+				WithKind(richerror.KindInternal)
+		}
+
+		return nil
+
+	})
+
+	if tErr != nil {
+		return nil, richerror.New(op).
+			WithWrapper(tErr).
+			WithMessage(ErrLoginFailed).
+			WithKind(richerror.KindInternal)
 	}
-	/**/
+
+	ctxLogger.Info("user created successfully", "account_id", user.ID, "email", maskEmail(req.Email))
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				s.logger.Error("panic in outbox immediate publisher", "recover", r)
+			}
+		}()
+
+		bgCtx := context.Background()
+
+		err = s.outbox.ProcessSingleEvent(bgCtx, outboxEvent)
+
+		if err != nil {
+			s.logger.Error("outbox single event process failed", "error", err)
+		}
+
+	}()
 
 	return httpresponse.New(http.StatusOK, &LoginResponse{
 		AccessToken:  accessToken,
@@ -317,7 +405,7 @@ func (s *Service) Login(ctx context.Context, deviceCtx *DeviceContext, req Login
 	}), nil
 }
 
-func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, token string) (*httpresponse.Response, error) {
+func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, req RefreshTokenRequest) (*httpresponse.Response, error) {
 	const op richerror.Operation = "auth.RefreshToken"
 
 	newRefreshToken, err := generateRefreshToken()
@@ -329,12 +417,26 @@ func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, to
 	}
 
 	expireRefreshToken := time.Now().Add(s.config.RefreshTokenDuration)
-	oldToken := hashRefreshToken(token)
+	oldToken := hashRefreshToken(req.RefreshToken)
 	newToken := hashRefreshToken(newRefreshToken)
 
-	deviceID, sessionID, userID, err := s.tokenRepo.RotateRefreshToken(ctx, deviceCtx, oldToken, newToken, expireRefreshToken)
+	deviceID, sessionID, userID, err := s.repo.RotateRefreshToken(ctx, deviceCtx, oldToken, newToken, expireRefreshToken, req.PushToken)
+	if err != nil {
+		var re *richerror.RichError
+		if errors.As(err, &re) && re.Kind() == richerror.KindNotFound {
+			return nil, richerror.New(op).
+				WithWrapper(re).
+				WithMessage(ErrRefreshTokenFailed).
+				WithKind(richerror.KindUnauthorized)
+		}
 
-	accessToken, err := user_access_token.GenerateAccessToken(userID, sessionID, s.config.AccessTokenDuration)
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrRefreshTokenFailed).
+			WithKind(richerror.KindInternal)
+	}
+
+	accessToken, err := user_access_token.GenerateAccessToken(userID, sessionID, s.config.JWTSecret, s.config.AccessTokenDuration)
 	if err != nil {
 		return nil, richerror.New(op).
 			WithWrapper(err).
@@ -353,7 +455,7 @@ func (s *Service) RefreshToken(ctx context.Context, deviceCtx *DeviceContext, to
 func (s *Service) GetUserSessions(ctx context.Context, userID int64) (*httpresponse.Response, error) {
 	const op richerror.Operation = "auth.GetUserSessions"
 
-	sessions, err := s.tokenRepo.GetUserSessions(ctx, userID)
+	sessions, err := s.repo.GetUserSessions(ctx, userID)
 	if err != nil {
 		return nil, richerror.New(op).
 			WithWrapper(err).
@@ -367,7 +469,7 @@ func (s *Service) GetUserSessions(ctx context.Context, userID int64) (*httprespo
 func (s *Service) LogoutSession(ctx context.Context, userID int64, sessionPublicID string) error {
 	const op richerror.Operation = "auth.LogoutSession"
 
-	err := s.tokenRepo.RevokeSession(
+	err := s.repo.RevokeSession(
 		ctx,
 		userID,
 		sessionPublicID,
@@ -388,7 +490,7 @@ func (s *Service) LogoutSession(ctx context.Context, userID int64, sessionPublic
 func (s *Service) LogoutAllSessions(ctx context.Context, userID int64, currentSessionID *string) error {
 	const op richerror.Operation = "auth.LogoutAllSessions"
 
-	err := s.tokenRepo.RevokeAllSessions(
+	err := s.repo.RevokeAllSessions(
 		ctx,
 		userID,
 		currentSessionID,
@@ -404,6 +506,31 @@ func (s *Service) LogoutAllSessions(ctx context.Context, userID int64, currentSe
 	}
 
 	return nil
+}
+
+func (s *Service) UpdatePushToken(ctx context.Context, userID int64, sessionID, pushToken string) error {
+	const op = "auth.UpdatePushToken"
+
+	err := s.repo.UpdatePushToken(ctx, sessionID, userID, pushToken)
+	if err != nil {
+		var re *richerror.RichError
+		if errors.As(err, &re) && re.Kind() == richerror.KindNotFound {
+			return richerror.New(op).
+				WithWrapper(err).
+				WithMessage("session not found").
+				WithKind(richerror.KindNotFound)
+		}
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to update push token").
+			WithKind(richerror.KindInternal)
+	}
+
+	return nil
+}
+
+func (s *Service) GetActiveSessions(ctx context.Context, userID string) ([]SessionItem, error) {
+	panic("implement me")
 }
 
 func maskEmail(email string) string {

@@ -12,13 +12,13 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// newUUID is a thin wrapper so worker.go doesn't import uuid directly.
+// newUUID is 1780407118_create_auth_outbox_events_table.up.sql thin wrapper so worker.go doesn't import uuid directly.
 func newUUID() string {
 	return uuid.New().String()
 }
 
 // SubscriberConfig holds runtime behaviour shared by all subscriber types.
-// It is consumed entirely in the constructor; no config is passed to Subscribe.
+// It is consumed entirely in the constructor; no config is passed to Handle.
 type SubscriberConfig struct {
 	MaxRetry       int64
 	Workers        int
@@ -27,7 +27,7 @@ type SubscriberConfig struct {
 	// OnDLQFail is called asynchronously when publishing to DLQ fails.
 	// Must be non-blocking. Panics inside OnDLQFail are recovered silently.
 	OnDLQFail func(msgID string, body []byte, err error)
-	// OnPanic is called synchronously when a handler panics, before the nack.
+	// OnPanic is called synchronously when 1780407118_create_auth_outbox_events_table.up.sql subscriber panics, before the nack.
 	OnPanic func(recovered any, msg amqp.Delivery)
 }
 
@@ -139,7 +139,7 @@ func (s *baseSubscriber) close(ctx context.Context) error {
 	return nil
 }
 
-// DirectSubscriber consumes from a direct exchange queue.
+// DirectSubscriber consumes from 1780407118_create_auth_outbox_events_table.up.sql direct exchange queue.
 type DirectSubscriber struct {
 	*baseSubscriber
 	eventName string
@@ -162,7 +162,7 @@ func (s *DirectSubscriber) Close(ctx context.Context) error {
 	return s.close(ctx)
 }
 
-// FanoutSubscriber consumes from one queue bound to a fanout exchange.
+// FanoutSubscriber consumes from one queue bound to 1780407118_create_auth_outbox_events_table.up.sql fanout exchange.
 type FanoutSubscriber struct {
 	*baseSubscriber
 	eventName string
@@ -187,7 +187,7 @@ func (s *FanoutSubscriber) Close(ctx context.Context) error {
 	return s.close(ctx)
 }
 
-// TopicSubscriber consumes from one queue bound to a topic exchange.
+// TopicSubscriber consumes from one queue bound to 1780407118_create_auth_outbox_events_table.up.sql topic exchange.
 type TopicSubscriber struct {
 	*baseSubscriber
 	eventName string

@@ -110,6 +110,7 @@ func (s *Server) setRoutes() {
 	sessionsRouter.POST("/logout", s.handler.LogoutSessionHandler)
 	sessionsRouter.POST("/logout-all", s.handler.LogoutAllSessionsHandler)
 	sessionsRouter.DELETE("/:session-id", s.handler.RevokeSessionHandler)
+	sessionsRouter.PUT("/push-token", s.handler.UpdatePushTokenHandler)
 
 }
 

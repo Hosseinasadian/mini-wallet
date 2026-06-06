@@ -6,6 +6,8 @@ import (
 	"github.com/hosseinasadian/mini-wallet/internal/auth/delivery/http"
 	authRepository "github.com/hosseinasadian/mini-wallet/internal/auth/repository"
 	authService "github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
+	outoboxService "github.com/hosseinasadian/mini-wallet/internal/auth/service/outbox"
+	outoboxWorker "github.com/hosseinasadian/mini-wallet/internal/auth/workers/outbox"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/database"
@@ -20,13 +22,21 @@ import (
 	"time"
 )
 
+//BatchInterval    time.Duration `koanf:"batch_interval"`
+//RecoveryInterval time.Duration `koanf:"recovery_interval"`
+//LockTimeout      time.Duration `koanf:"lock_timeout"`
+//BatchSize        int64         `koanf:"batch_size"`
+//Concurrency      int64         `koanf:"concurrency"`
+
 type Config struct {
-	AuthService            authService.Config `koanf:"service"`
-	MainRepository         config.MySQL       `koanf:"mysql"`
-	HTTPPort               int                `koanf:"http_port"`
-	Publisher              broker.Config      `koanf:"publisher"`
-	HTTPShutDownCtxTimeout time.Duration      `koanf:"http_shut_down_timeout"`
-	Otel                   pkgOtel.Config     `koanf:"otel"`
+	AuthService            authService.Config         `koanf:"service"`
+	MainRepository         config.MySQL               `koanf:"mysql"`
+	HTTPPort               int                        `koanf:"http_port"`
+	Publisher              broker.Config              `koanf:"publisher"`
+	HTTPShutDownCtxTimeout time.Duration              `koanf:"http_shut_down_timeout"`
+	Otel                   pkgOtel.Config             `koanf:"otel"`
+	OutboxWorker           outoboxWorker.WorkerConfig `koanf:"outbox_worker"`
+	OutboxService          outoboxService.Config      `koanf:"outbox_service"`
 }
 
 type Application struct {
@@ -36,6 +46,7 @@ type Application struct {
 	notificationPublisher broker.DirectPublisher
 	devicePublisher       broker.TopicPublisher
 	logger                *pkgLogger.Logger
+	worker                *outoboxWorker.Worker
 }
 
 func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
@@ -85,7 +96,7 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 		RetryTTL:  config.Publisher.RetryTTL,
 		Bindings: []rabbitmq.TopicBinding{
 			{
-				Queue:      "notification-service",
+				Queue:      "auth-service",
 				RoutingKey: "device.register",
 			},
 		},
@@ -101,11 +112,11 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//defer directTopology.Close()
 
 	err = directTopology.DeclareDirect(rabbitmq.DirectTopologyConfig{
-		EventName: "notification",
+		EventName: "auth",
 		RetryTTL:  config.Publisher.RetryTTL,
 	})
 	if err != nil {
-		mainLogger.Fatal("rabbitmq notification event failed", "error", err)
+		mainLogger.Fatal("rabbitmq auth event failed", "error", err)
 	}
 
 	// publisher
@@ -115,9 +126,9 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	}
 	//defer userPublisher.Close()
 
-	notificationPublisher, err := rabbitmq.NewDirectPublisher(rbConn, "notification")
+	notificationPublisher, err := rabbitmq.NewDirectPublisher(rbConn, "auth")
 	if err != nil {
-		mainLogger.Fatal("rabbitmq notification publisher failed", "error", err)
+		mainLogger.Fatal("rabbitmq auth publisher failed", "error", err)
 	}
 	//defer notificationPublisher.Close()
 
@@ -128,7 +139,8 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//defer devicePublisher.Close()
 
 	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
-	authSvc := authService.NewService(authRepo, authRepo, authSvcConfig, userPublisher, notificationPublisher, serviceLogger)
+	outboxSvc := outoboxService.NewService(authRepo, config.OutboxService, userPublisher, notificationPublisher, serviceLogger)
+	authSvc := authService.NewService(authRepo, authSvcConfig, outboxSvc, serviceLogger)
 
 	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
 	if err != nil {
@@ -141,6 +153,8 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	}, httpLogger)
 	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
+	outboxW := outoboxWorker.NewWorker(outboxSvc, serviceLogger, config.OutboxWorker)
+
 	return Application{
 		config:                config,
 		httpServer:            httpServer,
@@ -148,6 +162,7 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 		notificationPublisher: notificationPublisher,
 		devicePublisher:       devicePublisher,
 		logger:                logger,
+		worker:                outboxW,
 	}
 }
 
@@ -167,6 +182,15 @@ func (app Application) Start() {
 		app.httpServer.Run()
 	}()
 
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		app.worker.Start(workerCtx)
+	}()
+
 	<-stop
 	mainLogger.Info("received shutdown signal, initiating graceful shutdown")
 
@@ -184,9 +208,9 @@ func (app Application) Start() {
 	}
 
 	if err := app.notificationPublisher.Close(); err != nil {
-		mainLogger.Warn("notification publisher close error", "error", err)
+		mainLogger.Warn("auth publisher close error", "error", err)
 	} else {
-		mainLogger.Info("notification publisher closed")
+		mainLogger.Info("auth publisher closed")
 	}
 
 	if err := app.devicePublisher.Close(); err != nil {
@@ -194,6 +218,8 @@ func (app Application) Start() {
 	} else {
 		mainLogger.Info("device publisher closed")
 	}
+
+	workerCancel()
 
 	wg.Wait()
 	mainLogger.Info("application stopped")

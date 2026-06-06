@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 	"github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
+	outboxService "github.com/hosseinasadian/mini-wallet/internal/auth/service/outbox"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/jmoiron/sqlx"
-	"time"
 )
 
 type Repository struct {
@@ -26,54 +28,30 @@ func NewRepository(db *sqlx.DB, logger *pkgLogger.Logger) *Repository {
 	}
 }
 
-func (repo *Repository) Ping(ctx context.Context) error {
-	return repo.db.PingContext(ctx)
-}
-
-func (repo *Repository) CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error) {
-	const op = "repository.CreateUserByEmailAndPassword"
-
-	tx, err := repo.db.BeginTxx(ctx, nil)
+func (repo *Repository) RunInTx(ctx context.Context, fn func(exec auth.Repository) error) error {
+	var err error
+	var tx *sqlx.Tx
+	tx, err = repo.db.BeginTxx(ctx, nil)
 	if err != nil {
-		return 0, richerror.New(op).
-			WithMessage("failed to begin transaction").
-			WithKind(richerror.KindInternal)
+		return err
 	}
 
-	defer func() {
+	defer func(err error) {
 		if err != nil {
 			_ = tx.Rollback()
 		}
-	}()
+	}(err)
 
-	res, err := tx.ExecContext(ctx, "INSERT INTO users (email, password_hash) VALUES (?, ?)", email, password)
-	if err != nil {
-		var mysqlErr *mysql.MySQLError
-		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
-			return 0, richerror.New(op).
-				WithMessage("duplicate entry").
-				WithKind(richerror.KindConflict)
-		}
-
-		return 0, richerror.New(op).
-			WithMessage("failed to execute insert query").
-			WithKind(richerror.KindInternal)
+	if err = fn(&txRepository{tx: tx}); err != nil {
+		return err
 	}
 
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, richerror.New(op).
-			WithMessage("failed to get last insert id").
-			WithKind(richerror.KindInternal)
-	}
+	return tx.Commit()
 
-	if err = tx.Commit(); err != nil {
-		return 0, richerror.New(op).
-			WithMessage("failed to commit transaction").
-			WithKind(richerror.KindInternal)
-	}
+}
 
-	return id, nil
+func (repo *Repository) Ping(ctx context.Context) error {
+	return repo.db.PingContext(ctx)
 }
 
 func (repo *Repository) GetUserByEmail(ctx context.Context, email string) (*auth.User, error) {
@@ -97,220 +75,7 @@ func (repo *Repository) GetUserByEmail(ctx context.Context, email string) (*auth
 	return &user, nil
 }
 
-func (repo *Repository) UpsertSession(ctx context.Context, deviceCtx *auth.DeviceContext, userID int64, refreshTokenHash string, expiresAt time.Time) (string, string, error) {
-	const op = "repository.UpsertSession"
-
-	tx, err := repo.db.BeginTxx(ctx, nil)
-	if err != nil {
-		return "", "", richerror.New(op).
-			WithWrapper(err).
-			WithMessage("failed to upsert session").
-			WithKind(richerror.KindInternal)
-	}
-
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback()
-		}
-	}()
-
-	// ---------------------------------------------------
-	// 1. UPSERT DEVICE
-	// ---------------------------------------------------
-
-	devicePublicID := uuid.NewString()
-
-	_, err = tx.ExecContext(ctx, `
-        INSERT INTO devices (
-            public_id,
-            installation_id,
-            platform,
-            device_name,
-            app_version,
-            last_seen_at
-        )
-        VALUES (?, ?, ?, ?, ?, NOW())
-        ON DUPLICATE KEY UPDATE
-            device_name = VALUES(device_name),
-            app_version = VALUES(app_version),
-            last_seen_at = NOW()
-    `,
-		devicePublicID,
-		deviceCtx.InstallationID,
-		deviceCtx.Platform,
-		deviceCtx.DeviceName,
-		deviceCtx.AppVersion,
-	)
-	if err != nil {
-		return "", "", richerror.New(op).
-			WithWrapper(err).
-			WithMessage("failed to upsert session").
-			WithKind(richerror.KindInternal)
-	}
-
-	// fetch device (safe because UNIQUE(installation_id, platform))
-	var deviceID int64
-	err = tx.GetContext(ctx, &deviceID, `
-        SELECT id
-        FROM devices
-        WHERE installation_id = ? AND platform = ?
-    `,
-		deviceCtx.InstallationID,
-		deviceCtx.Platform,
-	)
-	if err != nil {
-		return "", "", richerror.New(op).
-			WithWrapper(err).
-			WithMessage("failed to upsert session").
-			WithKind(richerror.KindInternal)
-	}
-
-	// ---------------------------------------------------
-	// 2. CHECK EXISTING ACTIVE SESSION
-	// ---------------------------------------------------
-
-	var existingSession struct {
-		PublicID string `db:"public_id"`
-		UserID   int64  `db:"user_id"`
-		DeviceID int64  `db:"device_id"`
-	}
-
-	err = tx.GetContext(ctx, &existingSession, `
-        SELECT public_id, user_id, device_id
-        FROM device_sessions
-        WHERE user_id = ? AND device_id = ?
-        LIMIT 1
-    `,
-		userID,
-		deviceID,
-	)
-
-	// ---------------------------------------------------
-	// 3. IF EXISTS → MOVE TO HISTORY + UPDATE
-	// ---------------------------------------------------
-
-	if err == nil {
-
-		// move old session to history (before overwrite)
-		_, _ = tx.ExecContext(ctx, `
-            INSERT INTO device_session_history (
-                session_public_id,
-                user_id,
-                device_id,
-                refresh_token_hash,
-                ip_address,
-                user_agent,
-                created_at,
-                last_used_at,
-                revoked_at,
-                revoke_reason,
-                revoked_by
-            )
-            SELECT
-                public_id,
-                user_id,
-                device_id,
-                refresh_token_hash,
-                ip_address,
-                user_agent,
-                created_at,
-                last_used_at,
-                NOW(),
-                'rotated',
-                'system'
-            FROM device_sessions
-            WHERE public_id = ?
-        `, existingSession.PublicID)
-
-		// update active session
-		_, err = tx.ExecContext(ctx, `
-            UPDATE device_sessions
-            SET refresh_token_hash = ?,
-                expires_at = ?,
-                ip_address = ?,
-                user_agent = ?,
-                last_used_at = NOW()
-            WHERE public_id = ?
-        `,
-			refreshTokenHash,
-			expiresAt,
-			deviceCtx.IPAddress,
-			deviceCtx.UserAgent,
-			existingSession.PublicID,
-		)
-		if err != nil {
-			return "", "", richerror.New(op).
-				WithWrapper(err).
-				WithMessage("failed to upsert session").
-				WithKind(richerror.KindInternal)
-		}
-
-		// commit
-		if err = tx.Commit(); err != nil {
-			return "", "", richerror.New(op).
-				WithWrapper(err).
-				WithMessage("failed to upsert session").
-				WithKind(richerror.KindInternal)
-		}
-		committed = true
-
-		return devicePublicID, existingSession.PublicID, nil
-	}
-
-	// ---------------------------------------------------
-	// 4. ELSE → CREATE NEW SESSION
-	// ---------------------------------------------------
-
-	sessionPublicID := uuid.NewString()
-
-	_, err = tx.ExecContext(ctx, `
-        INSERT INTO device_sessions (
-            public_id,
-            user_id,
-            device_id,
-            refresh_token_hash,
-            ip_address,
-            user_agent,
-            expires_at,
-            created_at,
-            last_used_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
-    `,
-		sessionPublicID,
-		userID,
-		deviceID,
-		refreshTokenHash,
-		deviceCtx.IPAddress,
-		deviceCtx.UserAgent,
-		expiresAt,
-	)
-
-	if err != nil {
-		return "", "", richerror.New(op).
-			WithWrapper(err).
-			WithMessage("failed to upsert session").
-			WithKind(richerror.KindInternal)
-	}
-
-	// ---------------------------------------------------
-	// COMMIT
-	// ---------------------------------------------------
-
-	if err = tx.Commit(); err != nil {
-		return "", "", richerror.New(op).
-			WithWrapper(err).
-			WithMessage("failed to upsert session").
-			WithKind(richerror.KindInternal)
-	}
-
-	committed = true
-
-	return devicePublicID, sessionPublicID, nil
-}
-
-func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.DeviceContext, oldRefreshTokenHash string, newRefreshTokenHash string, newExpiresAt time.Time) (string, string, int64, error) {
+func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.DeviceContext, oldRefreshTokenHash string, newRefreshTokenHash string, newExpiresAt time.Time, pushToken *string) (string, string, int64, error) {
 	const op = "Repository.RotateRefreshToken"
 
 	tx, err := repo.db.BeginTxx(ctx, nil)
@@ -351,7 +116,17 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	// ---------------------------------------------------
 
 	if err != nil {
-		return "", "", 0, fmt.Errorf("invalid refresh token")
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", "", 0, richerror.New(op).
+				WithWrapper(err).
+				WithMessage("invalid refresh token").
+				WithKind(richerror.KindNotFound)
+		}
+
+		return "", "", 0, richerror.New(op).
+			WithWrapper(err).
+			WithMessage("invalid refresh token").
+			WithKind(richerror.KindInternal)
 	}
 
 	// ---------------------------------------------------
@@ -369,7 +144,8 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
 	// 4. ROTATE TOKEN
 	// ---------------------------------------------------
 
-	_, err = tx.ExecContext(ctx, `
+	if pushToken == nil {
+		_, err = tx.ExecContext(ctx, `
         UPDATE device_sessions
         SET refresh_token_hash = ?,
             expires_at = ?,
@@ -378,12 +154,36 @@ func (repo *Repository) RotateRefreshToken(ctx context.Context, deviceCtx *auth.
             last_used_at = NOW()
         WHERE public_id = ?
     `,
-		newRefreshTokenHash,
-		newExpiresAt,
-		deviceCtx.IPAddress,
-		deviceCtx.UserAgent,
-		sessionPublicID,
-	)
+			newRefreshTokenHash,
+			newExpiresAt,
+			deviceCtx.IPAddress,
+			deviceCtx.UserAgent,
+			sessionPublicID,
+		)
+	} else {
+		var newPushToken interface{} = nil
+		if *pushToken != "" {
+			newPushToken = *pushToken
+		}
+
+		_, err = tx.ExecContext(ctx, `
+        UPDATE device_sessions
+        SET refresh_token_hash = ?,
+            expires_at = ?,
+            ip_address = ?,
+            user_agent = ?,
+            push_token = ?,
+            last_used_at = NOW()
+        WHERE public_id = ?
+    `,
+			newRefreshTokenHash,
+			newExpiresAt,
+			deviceCtx.IPAddress,
+			deviceCtx.UserAgent,
+			newPushToken,
+			sessionPublicID,
+		)
+	}
 
 	if err != nil {
 		return "", "", 0, richerror.New(op).
@@ -692,6 +492,314 @@ func (repo *Repository) RevokeAllSessions(ctx context.Context, userID int64, exc
 	}
 
 	committed = true
+
+	return nil
+}
+
+func (repo *Repository) UpdatePushToken(ctx context.Context, sessionID string, userID int64, pushToken string) error {
+	const op = "repository.UpdatePushToken"
+
+	nullableToken := sql.NullString{String: pushToken, Valid: pushToken != ""}
+
+	result, err := repo.db.ExecContext(ctx, `
+        UPDATE device_sessions
+        SET push_token = ?
+        WHERE public_id = ? AND user_id = ?
+    `, nullableToken, sessionID, userID)
+
+	if err != nil {
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to update push token").
+			WithKind(richerror.KindInternal)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to get rows affected").
+			WithKind(richerror.KindInternal)
+	}
+
+	if rowsAffected == 0 {
+		return richerror.New(op).
+			WithMessage("session not found or does not belong to user").
+			WithKind(richerror.KindNotFound)
+	}
+
+	return nil
+}
+
+type txRepository struct {
+	tx *sqlx.Tx
+}
+
+func (repo *txRepository) CreateUserByEmailAndPassword(ctx context.Context, email, password string) (int64, error) {
+	const op = "repository.CreateUserByEmailAndPassword"
+
+	res, err := repo.tx.ExecContext(ctx, "INSERT INTO users (email, password_hash) VALUES (?, ?)", email, password)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return 0, richerror.New(op).
+				WithMessage("duplicate entry").
+				WithKind(richerror.KindConflict)
+		}
+
+		return 0, richerror.New(op).
+			WithMessage("failed to execute insert query").
+			WithKind(richerror.KindInternal)
+	}
+
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, richerror.New(op).
+			WithMessage("failed to get last insert id").
+			WithKind(richerror.KindInternal)
+	}
+
+	return id, nil
+}
+
+func (repo *txRepository) UpsertSession(ctx context.Context, deviceCtx *auth.DeviceContext, userID int64, refreshTokenHash string, expiresAt time.Time, pushToken *string) (string, string, error) {
+	const op = "repository.UpsertSession"
+
+	// ---------------------------------------------------
+	// 1. UPSERT DEVICE
+	// ---------------------------------------------------
+
+	devicePublicID := uuid.NewString()
+
+	_, err := repo.tx.ExecContext(ctx, `
+        INSERT INTO devices (
+            public_id,
+            installation_id,
+            platform,
+            device_name,
+            app_version,
+            last_seen_at
+        )
+        VALUES (?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            device_name = VALUES(device_name),
+            app_version = VALUES(app_version),
+            last_seen_at = NOW()
+    `,
+		devicePublicID,
+		deviceCtx.InstallationID,
+		deviceCtx.Platform,
+		deviceCtx.DeviceName,
+		deviceCtx.AppVersion,
+	)
+	if err != nil {
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
+	}
+
+	// fetch device (safe because UNIQUE(installation_id, platform))
+	var deviceID int64
+	err = repo.tx.GetContext(ctx, &deviceID, `
+        SELECT id
+        FROM devices
+        WHERE installation_id = ? AND platform = ?
+    `,
+		deviceCtx.InstallationID,
+		deviceCtx.Platform,
+	)
+	if err != nil {
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
+	}
+
+	// ---------------------------------------------------
+	// 2. CHECK EXISTING ACTIVE SESSION
+	// ---------------------------------------------------
+
+	var existingSession struct {
+		PublicID string `db:"public_id"`
+		UserID   int64  `db:"user_id"`
+		DeviceID int64  `db:"device_id"`
+	}
+
+	err = repo.tx.GetContext(ctx, &existingSession, `
+        SELECT public_id, user_id, device_id
+        FROM device_sessions
+        WHERE user_id = ? AND device_id = ?
+        LIMIT 1
+    `,
+		userID,
+		deviceID,
+	)
+
+	// ---------------------------------------------------
+	// 3. IF EXISTS → MOVE TO HISTORY + UPDATE
+	// ---------------------------------------------------
+
+	if err == nil {
+
+		// move old session to history (before overwrite)
+		_, _ = repo.tx.ExecContext(ctx, `
+            INSERT INTO device_session_history (
+                session_public_id,
+                user_id,
+                device_id,
+                refresh_token_hash,
+                ip_address,
+                user_agent,
+                created_at,
+                last_used_at,
+                revoked_at,
+                revoke_reason,
+                revoked_by
+            )
+            SELECT
+                public_id,
+                user_id,
+                device_id,
+                refresh_token_hash,
+                ip_address,
+                user_agent,
+                created_at,
+                last_used_at,
+                NOW(),
+                'rotated',
+                'system'
+            FROM device_sessions
+            WHERE public_id = ?
+        `, existingSession.PublicID)
+
+		// update active session
+		if pushToken == nil {
+			_, err = repo.tx.ExecContext(ctx, `
+            UPDATE device_sessions
+            SET refresh_token_hash = ?,
+                expires_at = ?,
+                ip_address = ?,
+                user_agent = ?,
+                last_used_at = NOW()
+            WHERE public_id = ?
+        `,
+				refreshTokenHash,
+				expiresAt,
+				deviceCtx.IPAddress,
+				deviceCtx.UserAgent,
+				existingSession.PublicID,
+			)
+		} else {
+			var newPushToken interface{} = nil
+			if *pushToken != "" {
+				newPushToken = *pushToken
+			}
+
+			_, err = repo.tx.ExecContext(ctx, `
+            UPDATE device_sessions
+            SET refresh_token_hash = ?,
+                expires_at = ?,
+                ip_address = ?,
+                user_agent = ?,
+                push_token = ?,
+                last_used_at = NOW()
+            WHERE public_id = ?
+        `,
+				refreshTokenHash,
+				expiresAt,
+				deviceCtx.IPAddress,
+				deviceCtx.UserAgent,
+				newPushToken,
+				existingSession.PublicID,
+			)
+		}
+
+		if err != nil {
+			return "", "", richerror.New(op).
+				WithWrapper(err).
+				WithMessage("failed to upsert session").
+				WithKind(richerror.KindInternal)
+		}
+
+		return devicePublicID, existingSession.PublicID, nil
+	}
+
+	// ---------------------------------------------------
+	// 4. ELSE → CREATE NEW SESSION
+	// ---------------------------------------------------
+
+	var newPushToken interface{} = nil
+	if pushToken != nil && *pushToken != "" {
+		newPushToken = *pushToken
+	}
+
+	sessionPublicID := uuid.NewString()
+
+	_, err = repo.tx.ExecContext(ctx, `
+        INSERT INTO device_sessions (
+            public_id,
+            user_id,
+            device_id,
+            refresh_token_hash,
+            ip_address,
+            user_agent,
+			push_token,
+            expires_at,
+            created_at,
+            last_used_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+    `,
+		sessionPublicID,
+		userID,
+		deviceID,
+		refreshTokenHash,
+		deviceCtx.IPAddress,
+		deviceCtx.UserAgent,
+		newPushToken,
+		expiresAt,
+	)
+
+	if err != nil {
+		return "", "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to upsert session").
+			WithKind(richerror.KindInternal)
+	}
+
+	return devicePublicID, sessionPublicID, nil
+}
+
+func (repo *txRepository) InsertOutboxEvent(ctx context.Context, event *outboxService.OutboxEvent) error {
+	const op richerror.Operation = "repository.InsertOutboxEvent"
+
+	query := `
+        INSERT INTO outbox_events (
+            event_id,
+            event_type,
+            payload,
+            aggregate_type,
+            aggregate_id,
+            created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)
+    `
+
+	_, err := repo.tx.ExecContext(ctx, query,
+		event.EventID,
+		event.EventType,
+		event.Payload,
+		event.AggregateType,
+		event.AggregateID,
+		event.CreatedAt,
+	)
+
+	if err != nil {
+		return richerror.New(op).
+			WithWrapper(err).
+			WithMessage("failed to insert outbox event").
+			WithKind(richerror.KindInternal)
+	}
 
 	return nil
 }

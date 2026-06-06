@@ -1,6 +1,7 @@
 package rabbitmq
 
 import (
+	"errors"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
@@ -67,4 +68,14 @@ func extractRejectedCount(headers amqp.Table, queueName string) int64 {
 	}
 
 	return 0
+}
+
+func isChannelError(err error) bool {
+	var amqpErr *amqp.Error
+	if errors.As(err, &amqpErr) {
+		// 504 = channel/connection not open
+		// 320 = connection forced closed
+		return amqpErr.Code == amqp.ChannelError || amqpErr.Code == amqp.ConnectionForced
+	}
+	return false
 }

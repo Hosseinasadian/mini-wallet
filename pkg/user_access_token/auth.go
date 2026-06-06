@@ -3,7 +3,6 @@ package user_access_token
 import (
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
-	"os"
 	"time"
 )
 
@@ -13,7 +12,7 @@ type Claims struct {
 	SessionID string `json:"session_id"`
 }
 
-func GenerateAccessToken(accountID int64, sessionID string, duration time.Duration) (string, error) {
+func GenerateAccessToken(accountID int64, sessionID string, jwtSecret string, duration time.Duration) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
 		jwt.RegisteredClaims{
 			Issuer:    "mini-wallet",
@@ -24,7 +23,7 @@ func GenerateAccessToken(accountID int64, sessionID string, duration time.Durati
 		accountID, sessionID,
 	})
 
-	return token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+	return token.SignedString([]byte(jwtSecret))
 }
 
 func VerifyAccessToken(tokenString, jwtSecret string) (*Claims, error) {

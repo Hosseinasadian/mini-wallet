@@ -46,7 +46,7 @@ func (h *Handler) ReadyHandler(c *gin.Context) {
 }
 
 // RegisterHandler @Summary      Register
-// @Description  Register a new user
+// @Description  Register 1780407118_create_auth_outbox_events_table.up.sql new user
 // @Tags         auth
 // @Accept       json
 // @Produce      json
@@ -143,29 +143,25 @@ func (h *Handler) LoginHandler(c *gin.Context) {
 // @Param        X-Device-Name    header    string              true  "Device name"         example(iPhone 15 Pro)
 // @Param        X-Installation-Id header   string              true  "Installation UUID"   example(550e8400-e29b-41d4-a716-446655440000)
 // @Param        X-Platform       header    string              true  "Platform"            Enums(ios, android, web)
-// @Param        Authorization    header    string  true  "Bearer refresh_token"
+// @Param        request          body      auth.RefreshTokenRequest true "Refresh token credentials"
 // @Success      200              {object}  auth.LoginResponse
 // @Failure      401              {object}  map[string]string
 // @Router       /refresh-token [post]
 func (h *Handler) RefreshTokenHandler(c *gin.Context) {
-	authHeader := c.GetHeader("Authorization")
-	if authHeader == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "unauthorized",
-		})
-		return
-	}
+	ctxLogger := middleware.GetLoggerContext(c.Request.Context(), h.logger)
+	var req auth.RefreshTokenRequest
 
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"message": "unauthorized",
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ctxLogger.Warn("filed to refresh token", "error", err)
+
+		c.JSON(http.StatusBadRequest, gin.H{
+			"message": "invalid request",
 		})
 		return
 	}
 
 	deviceCtx := h.getDeviceContext(c)
-	response, err := h.authService.RefreshToken(c.Request.Context(), deviceCtx, parts[1])
+	response, err := h.authService.RefreshToken(c.Request.Context(), deviceCtx, req)
 	if err != nil {
 		errRes := richerror.ErrHTTP(err)
 		c.JSON(errRes.Code, errRes)
@@ -320,7 +316,7 @@ func (h *Handler) LogoutAllSessionsHandler(c *gin.Context) {
 }
 
 // @Summary      Revoke Session
-// @Description  Revoke a specific session by ID
+// @Description  Revoke 1780407118_create_auth_outbox_events_table.up.sql specific session by ID
 // @Tags         sessions
 // @Security     BearerAuth
 // @Produce      json
@@ -361,4 +357,37 @@ func (h *Handler) RevokeSessionHandler(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"message": "session revoked successfully",
 	})
+}
+
+// UpdatePushTokenHandler @Summary      Update Push Token
+// @Description  Update or remove push auth token for current session.
+// @Description  - Send `{"push_token": "new_token"}` to set 1780407118_create_auth_outbox_events_table.up.sql new token.
+// @Description  - Send `{"push_token": ""}` to remove (clear) the token.
+// @Description  - If the field is omitted, the token remains unchanged.
+// @Tags         notifications
+// @Security     BearerAuth
+// @Accept       json
+// @Produce      json
+// @Param        request          body      auth.UpdatePushTokenRequest  true  "Push token update payload"
+// @Success      200              {object}  nil  "Token updated successfully (no content)"
+// @Failure      400              {object}  map[string]string  "Bad request - missing or invalid push_token field"
+// @Failure      401              {object}  map[string]string  "Unauthorized - invalid or missing token"
+// @Failure      500              {object}  map[string]string  "Internal server error"
+// @Router       /push-token [put]
+func (h *Handler) UpdatePushTokenHandler(c *gin.Context) {
+	var req auth.UpdatePushTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "push_token required"})
+		return
+	}
+	userID := middleware.GetUserId(c)
+	sessionID := middleware.GetSessionId(c)
+
+	err := h.authService.UpdatePushToken(c.Request.Context(), userID, sessionID, req.PushToken)
+	if err != nil {
+		errRes := richerror.ErrHTTP(err)
+		c.JSON(errRes.Code, errRes)
+		return
+	}
+	c.Status(http.StatusOK)
 }

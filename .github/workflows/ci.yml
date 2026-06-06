@@ -18,7 +18,7 @@ permissions:
 env:
   REGISTRY: docker.io
   IMAGE_PREFIX: hossein1992/mini-wallet
-  SERVICES: "auth wallet docs notification"
+  SERVICES: "auth wallet docs auth"
   BASE_URL: "http://localhost:180"
 
 jobs:
@@ -132,7 +132,7 @@ jobs:
             changed: ${{ needs.pr-check.outputs.changed_services }}
           - service: docs
             changed: ${{ needs.pr-check.outputs.changed_services }}
-          - service: notification
+          - service: auth
             changed: ${{ needs.pr-check.outputs.changed_services }}
 
     steps:

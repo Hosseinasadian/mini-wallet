@@ -17,6 +17,6 @@ subscriber:
   handler_timeout: "10s"
 
 otel:
-  service_name: "notification"
+  service_name: "auth"
   environment: "stage"
   endpoint: "mini_wallet-otel-collector:4317"

@@ -250,6 +250,68 @@
                 }
             }
         },
+        "/push-token": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Update or remove push notification token for current session.\n- Send `{\"push_token\": \"new_token\"}` to set a new token.\n- Send `{\"push_token\": \"\"}` to remove (clear) the token.\n- If the field is omitted, the token remains unchanged.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "notifications"
+                ],
+                "parameters": [
+                    {
+                        "description": "Push token update payload",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.UpdatePushTokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Token updated successfully (no content)"
+                    },
+                    "400": {
+                        "description": "Bad request - missing or invalid push_token field",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized - invalid or missing token",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/refresh-token": {
             "post": {
                 "description": "Refresh access token using refresh token",
@@ -298,11 +360,13 @@
                         "required": true
                     },
                     {
-                        "type": "string",
-                        "description": "Bearer refresh_token",
-                        "name": "Authorization",
-                        "in": "header",
-                        "required": true
+                        "description": "Refresh token credentials",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.RefreshTokenRequest"
+                        }
                     }
                 ],
                 "responses": {
@@ -634,6 +698,9 @@
                 },
                 "password": {
                     "type": "string"
+                },
+                "push_token": {
+                    "type": "string"
                 }
             }
         },
@@ -657,6 +724,17 @@
                 }
             }
         },
+        "auth.RefreshTokenRequest": {
+            "type": "object",
+            "properties": {
+                "push_token": {
+                    "type": "string"
+                },
+                "refresh_token": {
+                    "type": "string"
+                }
+            }
+        },
         "auth.RegisterRequest": {
             "type": "object",
             "properties": {
@@ -664,6 +742,9 @@
                     "type": "string"
                 },
                 "password": {
+                    "type": "string"
+                },
+                "push_token": {
                     "type": "string"
                 }
             }
@@ -684,6 +765,17 @@
                     "type": "string"
                 },
                 "user_access_token": {
+                    "type": "string"
+                }
+            }
+        },
+        "auth.UpdatePushTokenRequest": {
+            "type": "object",
+            "required": [
+                "push_token"
+            ],
+            "properties": {
+                "push_token": {
                     "type": "string"
                 }
             }

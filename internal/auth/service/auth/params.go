@@ -1,8 +1,9 @@
 package auth
 
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email     string  `json:"email"`
+	Password  string  `json:"password"`
+	PushToken *string `json:"push_token,omitempty"`
 }
 type RegisterResponse struct {
 	Message      string  `json:"message"`
@@ -13,8 +14,9 @@ type RegisterResponse struct {
 }
 
 type LoginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+	Email     string  `json:"email"`
+	Password  string  `json:"password"`
+	PushToken *string `json:"push_token,omitempty"`
 }
 type LoginResponse struct {
 	AccessToken  string `json:"user_access_token"`
@@ -22,6 +24,10 @@ type LoginResponse struct {
 	DeviceID     string `json:"device_id"`
 	SessionID    string `json:"session_id"`
 	User         *User  `json:"user"`
+}
+type RefreshTokenRequest struct {
+	RefreshToken string  `json:"refresh_token"`
+	PushToken    *string `json:"push_token,omitempty"`
 }
 type RefreshTokenResponse struct {
 	AccessToken  string `json:"user_access_token"`
@@ -37,4 +43,8 @@ type DeviceContext struct {
 	Platform       string `json:"platform"`
 	DeviceName     string `json:"device_name"`
 	AppVersion     string `json:"app_version"`
+}
+
+type UpdatePushTokenRequest struct {
+	PushToken string `json:"push_token"`
 }

@@ -27,7 +27,7 @@ services:
     volumes:
       - mini_wallet-redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "redis_stage_password_2024", "ping"]
+      test: ["CMD", "redis-cli", "-1780407118_create_auth_outbox_events_table.up.sql", "redis_stage_password_2024", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5

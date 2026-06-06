@@ -2,10 +2,10 @@ package notification
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/hosseinasadian/mini-wallet/internal/notification/delivery/http"
 	"github.com/hosseinasadian/mini-wallet/internal/notification/service/notification"
+	notificationHandler "github.com/hosseinasadian/mini-wallet/internal/notification/subscriber"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/hub"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
@@ -36,16 +36,12 @@ type Config struct {
 	Otel                         pkgOtel.Config      `koanf:"otel"`
 }
 
-type Sender interface {
-	Send(ctx context.Context, userID string, title, message string) error
-}
-
 type Application struct {
 	config                 Config
 	httpServer             *http.Server
 	notificationSubscriber broker.Subscriber
 	hub                    *hub.Hub
-	sender                 Sender
+	notificationHandler    *notificationHandler.Handler
 	logger                 *pkgLogger.Logger
 }
 
@@ -66,11 +62,11 @@ func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, m
 	//defer topology.Close()
 
 	err = topology.DeclareDirect(rabbitmq.DirectTopologyConfig{
-		EventName: "notification",
+		EventName: "auth",
 		RetryTTL:  config.Subscriber.RetryTTL,
 	})
 	if err != nil {
-		mainLogger.Fatal("rabbitmq notification event failed", "error", err)
+		mainLogger.Fatal("rabbitmq auth event failed", "error", err)
 	}
 
 	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
@@ -91,7 +87,7 @@ func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, m
 
 	notificationSubscriber, err := rabbitmq.NewDirectSubscriber(
 		rbConn,
-		"notification",
+		"auth",
 		rabbitmq.SubscriberConfig{
 			Workers:        config.Subscriber.Workers,
 			MaxRetry:       config.Subscriber.MaxRetry,
@@ -99,7 +95,7 @@ func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, m
 			HandlerTimeout: config.Subscriber.HandlerTimeout,
 
 			OnPanic: func(rec any, msg amqp.Delivery) {
-				log.Println("handler panic:", rec)
+				log.Println("subscriber panic:", rec)
 			},
 
 			OnDLQFail: func(msgID string, body []byte, err error) {
@@ -112,7 +108,16 @@ func Setup(config Config, redisAdapter *redis.Redis, logger *pkgLogger.Logger, m
 		mainLogger.Fatal("rabbitmq subscriber failed", "error", err)
 	}
 
-	return Application{config: config, httpServer: httpServer, notificationSubscriber: notificationSubscriber, hub: notificationHub, sender: senderOneSignal, logger: logger}
+	nh := notificationHandler.New(notificationHub, senderOneSignal, logger)
+
+	return Application{
+		config:                 config,
+		httpServer:             httpServer,
+		notificationSubscriber: notificationSubscriber,
+		hub:                    notificationHub,
+		notificationHandler:    nh,
+		logger:                 logger,
+	}
 }
 
 func (app Application) Start() {
@@ -143,33 +148,7 @@ func (app Application) Start() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := app.notificationSubscriber.Subscribe(func(
-			ctx context.Context,
-			msg broker.Message,
-		) error {
-
-			var evt struct {
-				Message string `json:"message"`
-				UserID  int64  `json:"user_id"`
-			}
-
-			if err := json.Unmarshal(msg.Body, &evt); err != nil {
-				return err
-			}
-
-			mainLogger.Info("received message", "body", evt.Message, "user_id", evt.UserID)
-
-			userIdStr := fmt.Sprintf("%d", evt.UserID)
-			if app.hub.IsOnline(userIdStr) {
-				app.hub.Publish(userIdStr, evt.Message)
-			} else {
-				if err := app.sender.Send(ctx, userIdStr, "new notification", evt.Message); err != nil {
-					mainLogger.Error("send notification failed", "error", err)
-				}
-			}
-
-			return nil
-		})
+		err := app.notificationSubscriber.Subscribe(app.notificationHandler.Handle)
 
 		if err != nil {
 			mainLogger.Error("subscribe failed", "error", err)
@@ -199,9 +178,9 @@ func (app Application) Start() {
 	defer subCancel()
 
 	if err := app.notificationSubscriber.Close(subCtx); err != nil {
-		mainLogger.Warn("notification publisher close error", "error", err)
+		mainLogger.Warn("auth publisher close error", "error", err)
 	} else {
-		mainLogger.Info("notification publisher closed")
+		mainLogger.Info("auth publisher closed")
 	}
 
 	app.hub.Close()

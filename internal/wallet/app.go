@@ -2,11 +2,11 @@ package wallet
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"github.com/hosseinasadian/mini-wallet/internal/wallet/delivery/http"
 	walletRepository "github.com/hosseinasadian/mini-wallet/internal/wallet/repository"
 	walletService "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
+	walletHandler "github.com/hosseinasadian/mini-wallet/internal/wallet/subscriber"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/database"
@@ -36,6 +36,7 @@ type Application struct {
 	httpServer     *http.Server
 	userSubscriber broker.Subscriber
 	logger         *pkgLogger.Logger
+	walletHandler  *walletHandler.Handler
 }
 
 func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
@@ -115,11 +116,14 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//	}
 	//}()
 
+	wh := walletHandler.New(mainLogger)
+
 	return Application{
 		config:         config,
 		httpServer:     httpServer,
 		userSubscriber: userSubscriber,
 		logger:         logger,
+		walletHandler:  wh,
 	}
 }
 
@@ -134,22 +138,7 @@ func (app Application) Start() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := app.userSubscriber.Subscribe(func(
-			ctx context.Context,
-			msg broker.Message,
-		) error {
-
-			var evt struct {
-				ID    string `json:"id"`
-				Email string `json:"email"`
-			}
-
-			if err := json.Unmarshal(msg.Body, &evt); err != nil {
-				return err
-			}
-
-			return nil
-		})
+		err := app.userSubscriber.Subscribe(app.walletHandler.Handle)
 
 		if err != nil {
 			mainLogger.Error("user subscriber failed", "error", err)

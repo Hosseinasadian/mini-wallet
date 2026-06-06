@@ -17,3 +17,13 @@ otel:
   service_name: "auth"
   environment: "stage"
   endpoint: "mini_wallet-otel-collector:4317"
+
+outbox_worker:
+  batch_interval: "5s"
+  recovery_interval: "60s"
+  lock_timeout: "60s"
+  batch_size: 60
+  concurrency: 6
+
+outbox_service:
+  lock_timeout: "20s"

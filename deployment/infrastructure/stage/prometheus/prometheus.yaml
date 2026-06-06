@@ -11,5 +11,5 @@ scrape_configs:
 #      - targets:
 #          - "mini_wallet-auth:9090"
 #          - "mini_wallet-wallet:9090"
-#          - "mini_wallet-notification:9090"
+#          - "mini_wallet-auth:9090"
 #          - "mini_wallet-docs:9090"
