@@ -3,12 +3,18 @@ package auth
 import (
 	"context"
 	"fmt"
+	authGrpc "github.com/hosseinasadian/mini-wallet/internal/auth/delivery/grpc"
 	"github.com/hosseinasadian/mini-wallet/internal/auth/delivery/http"
 	authRepository "github.com/hosseinasadian/mini-wallet/internal/auth/repository"
 	authService "github.com/hosseinasadian/mini-wallet/internal/auth/service/auth"
+	outoboxService "github.com/hosseinasadian/mini-wallet/internal/auth/service/outbox"
+	outoboxWorker "github.com/hosseinasadian/mini-wallet/internal/auth/workers/outbox"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
 	"github.com/hosseinasadian/mini-wallet/pkg/database"
+	"github.com/hosseinasadian/mini-wallet/pkg/grpc"
+	pkgGrpc "github.com/hosseinasadian/mini-wallet/pkg/grpc"
+	"github.com/hosseinasadian/mini-wallet/pkg/grpc/interceptors"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
 	pkgOtel "github.com/hosseinasadian/mini-wallet/pkg/otel"
 	"github.com/hosseinasadian/mini-wallet/pkg/rabbitmq"
@@ -20,13 +26,22 @@ import (
 	"time"
 )
 
+//BatchInterval    time.Duration `koanf:"batch_interval"`
+//RecoveryInterval time.Duration `koanf:"recovery_interval"`
+//LockTimeout      time.Duration `koanf:"lock_timeout"`
+//BatchSize        int64         `koanf:"batch_size"`
+//Concurrency      int64         `koanf:"concurrency"`
+
 type Config struct {
-	AuthService            authService.Config `koanf:"service"`
-	MainRepository         config.MySQL       `koanf:"mysql"`
-	HTTPPort               int                `koanf:"http_port"`
-	Publisher              broker.Config      `koanf:"publisher"`
-	HTTPShutDownCtxTimeout time.Duration      `koanf:"http_shut_down_timeout"`
-	Otel                   pkgOtel.Config     `koanf:"otel"`
+	AuthService            authService.Config         `koanf:"service"`
+	MainRepository         config.MySQL               `koanf:"mysql"`
+	HTTPPort               int                        `koanf:"http_port"`
+	Publisher              broker.Config              `koanf:"publisher"`
+	HTTPShutDownCtxTimeout time.Duration              `koanf:"http_shut_down_timeout"`
+	Otel                   pkgOtel.Config             `koanf:"otel"`
+	OutboxWorker           outoboxWorker.WorkerConfig `koanf:"outbox_worker"`
+	OutboxService          outoboxService.Config      `koanf:"outbox_service"`
+	GRPCServer             pkgGrpc.Config             `koanf:"grpc_server"`
 }
 
 type Application struct {
@@ -36,6 +51,8 @@ type Application struct {
 	notificationPublisher broker.DirectPublisher
 	devicePublisher       broker.TopicPublisher
 	logger                *pkgLogger.Logger
+	worker                *outoboxWorker.Worker
+	grpcServer            authGrpc.Server
 }
 
 func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp *metric.MeterProvider) Application {
@@ -80,20 +97,6 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 		mainLogger.Fatal("rabbitmq user topic failed", "error", err)
 	}
 
-	err = topicTopology.DeclareTopic(rabbitmq.TopicTopologyConfig{
-		EventName: "device",
-		RetryTTL:  config.Publisher.RetryTTL,
-		Bindings: []rabbitmq.TopicBinding{
-			{
-				Queue:      "notification-service",
-				RoutingKey: "device.register",
-			},
-		},
-	})
-	if err != nil {
-		mainLogger.Fatal("rabbitmq device topic failed", "error", err)
-	}
-
 	directTopology, err := rabbitmq.NewTopology(rbConn)
 	if err != nil {
 		mainLogger.Fatal("rabbitmq direct topology failed", "error", err)
@@ -101,11 +104,11 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//defer directTopology.Close()
 
 	err = directTopology.DeclareDirect(rabbitmq.DirectTopologyConfig{
-		EventName: "notification",
+		EventName: "auth",
 		RetryTTL:  config.Publisher.RetryTTL,
 	})
 	if err != nil {
-		mainLogger.Fatal("rabbitmq notification event failed", "error", err)
+		mainLogger.Fatal("rabbitmq auth event failed", "error", err)
 	}
 
 	// publisher
@@ -128,7 +131,8 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//defer devicePublisher.Close()
 
 	serviceLogger := logger.With("layer", string(pkgLogger.LayerService))
-	authSvc := authService.NewService(authRepo, authRepo, authSvcConfig, userPublisher, notificationPublisher, serviceLogger)
+	outboxSvc := outoboxService.NewService(authRepo, config.OutboxService, userPublisher, notificationPublisher, serviceLogger)
+	authSvc := authService.NewService(authRepo, authSvcConfig, outboxSvc, serviceLogger)
 
 	httpMetrics, err := pkgOtel.AddHttpMetrics(mp, config.Otel.ServiceName)
 	if err != nil {
@@ -141,6 +145,19 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	}, httpLogger)
 	httpServer := http.NewServer(fmt.Sprintf(":%d", config.HTTPPort), httpHandler, config.AuthService.JWTSecret, config.Otel.ServiceName, httpLogger, httpMetrics)
 
+	outboxW := outoboxWorker.NewWorker(outboxSvc, serviceLogger, config.OutboxWorker)
+
+	grpcMetrics, err := interceptors.NewGRPCMetrics(mp, config.Otel.ServiceName)
+	if err != nil {
+		mainLogger.Fatal("failed to create grpc metrics", "error", err)
+	}
+
+	grpcInterceptors := interceptors.New(config.Otel.ServiceName, serviceLogger, grpcMetrics)
+	grpcServer, err := grpc.New(config.GRPCServer, grpcInterceptors)
+
+	authGrpcHandler := authGrpc.NewHandler(authSvc)
+	authGrpcServer := authGrpc.New(grpcServer, authGrpcHandler)
+
 	return Application{
 		config:                config,
 		httpServer:            httpServer,
@@ -148,6 +165,8 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 		notificationPublisher: notificationPublisher,
 		devicePublisher:       devicePublisher,
 		logger:                logger,
+		worker:                outboxW,
+		grpcServer:            authGrpcServer,
 	}
 }
 
@@ -167,6 +186,25 @@ func (app Application) Start() {
 		app.httpServer.Run()
 	}()
 
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		mainLogger.Info("gRPC server starting", "port", app.config.GRPCServer.Port)
+		if err := app.grpcServer.Serve(); err != nil {
+			mainLogger.Error("error in serving gRPC server", "error", err)
+		}
+	}()
+
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	defer workerCancel()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		app.worker.Start(workerCtx)
+	}()
+
 	<-stop
 	mainLogger.Info("received shutdown signal, initiating graceful shutdown")
 
@@ -176,6 +214,10 @@ func (app Application) Start() {
 	if err := app.httpServer.Stop(httpCtx); err != nil {
 		mainLogger.Warn("http server stop failed", "error", err)
 	}
+
+	logger.Info("Shutting down gRPC server...")
+	app.grpcServer.Stop()
+	logger.Info("gRPC server stopped")
 
 	if err := app.userPublisher.Close(); err != nil {
 		mainLogger.Warn("user publisher close error", "error", err)
@@ -194,6 +236,8 @@ func (app Application) Start() {
 	} else {
 		mainLogger.Info("device publisher closed")
 	}
+
+	workerCancel()
 
 	wg.Wait()
 	mainLogger.Info("application stopped")

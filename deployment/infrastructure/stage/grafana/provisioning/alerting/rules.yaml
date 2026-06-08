@@ -1,0 +1,48 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: notification-service
+    folder: Alerts
+    interval: 1m
+    rules:
+      - uid: notification-mark-failures
+        title: "Notification Mark Failures"
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: loki
+            relativeTimeRange:
+              from: 900   # 15 دقیقه به ثانیه
+              to: 0
+            model:
+              expr: |
+                sum(count_over_time(
+                  {app="notification"} 
+                  |~ "failed to mark (failed|sent) event"
+                  [15m]
+                ))
+          - refId: C
+            datasourceUid: "__expr__"
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [3]
+                  query:
+                    params: [A]
+        noDataState: OK
+        execErrState: Alerting
+        for: 0m
+        annotations:
+          summary: "Notification mark failures detected"
+          description: "More than 3 mark failures in last 15 minutes"
+        labels:
+          severity: warning
+        notifications:
+          - uid: email-receiver

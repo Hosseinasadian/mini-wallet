@@ -93,7 +93,7 @@ func RegisterHandler(c *gin.Context) {
 		return
 	}
 
-	emailRegex := regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,4}$`)
+	emailRegex := regexp.MustCompile(`^[1780772965_create_notification_outbox_events_table.up.sql-z0-9._%+\-]+@[1780772965_create_notification_outbox_events_table.up.sql-z0-9.\-]+\.[1780772965_create_notification_outbox_events_table.up.sql-z]{2,4}$`)
 	if !emailRegex.MatchString(req.Email) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{
 			"message": "invalid email",

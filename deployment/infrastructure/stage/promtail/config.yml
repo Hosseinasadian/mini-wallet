@@ -18,7 +18,7 @@ scrape_configs:
         action: keep
 
       - source_labels: [__meta_docker_container_name]
-        regex: .*/mini_wallet-([a-zA-Z0-9_]+)
+        regex: .*/mini_wallet-([1780407118_create_auth_outbox_events_table.up.sql-zA-Z0-9_]+)
         target_label: app
         replacement: ${1}
 

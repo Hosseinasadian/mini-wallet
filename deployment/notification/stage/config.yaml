@@ -2,6 +2,10 @@ http_port: 5002
 http_shut_down_timeout: "3s"
 subscriber_shutdown_timeout: "3s"
 
+mysql:
+  port: 3306
+  database: "wallet_db"
+
 redis:
   host: "mini_wallet-redis"
   port: 6379
@@ -20,3 +24,18 @@ otel:
   service_name: "notification"
   environment: "stage"
   endpoint: "mini_wallet-otel-collector:4317"
+
+grpc_notification_client:
+  host: "auth"
+  port: 6002
+  tls_enabled: false
+
+outbox_worker:
+  batch_interval: "5s"
+  recovery_interval: "60s"
+  lock_timeout: "60s"
+  batch_size: 60
+  concurrency: 6
+
+outbox_service:
+  lock_timeout: "20s"

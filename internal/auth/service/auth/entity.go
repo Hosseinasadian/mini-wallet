@@ -25,6 +25,7 @@ type SessionItem struct {
 	AppVersion string    `db:"app_version" json:"app_version"`
 	IPAddress  []byte    `db:"ip_address" json:"ip_address"`
 	UserAgent  string    `db:"user_agent" json:"user_agent"`
+	PushToken  *string   `db:"push_token" json:"-"`
 	CreatedAt  time.Time `db:"created_at" json:"created_at"`
 	LastUsedAt time.Time `db:"last_used_at" json:"last_used_at"`
 	ExpiresAt  time.Time `db:"expires_at" json:"expires_at"`

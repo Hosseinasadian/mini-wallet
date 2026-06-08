@@ -2,18 +2,18 @@ package http
 
 import (
 	"github.com/gin-gonic/gin"
-	wallet "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
+	wallet2 "github.com/hosseinasadian/mini-wallet/internal/wallet/service/wallet"
 	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"net/http"
 )
 
 type Handler struct {
-	walletService *wallet.Service
+	walletService *wallet2.Service
 	logger        *logger.Logger
 }
 
-func NewHandler(walletService *wallet.Service, logger *logger.Logger) Handler {
+func NewHandler(walletService *wallet2.Service, logger *logger.Logger) Handler {
 	return Handler{
 		walletService: walletService,
 		logger:        logger,
@@ -36,7 +36,7 @@ func (h *Handler) ReadyHandler(c *gin.Context) {
 }
 
 func (h *Handler) TransferHandler(c *gin.Context) {
-	var req wallet.TransferRequest
+	var req wallet2.TransferRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"message": "invalid request",

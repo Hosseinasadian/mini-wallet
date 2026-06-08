@@ -12,6 +12,7 @@ import (
 )
 
 type basePublisher struct {
+	conn   *Connection
 	ch     *amqp.Channel
 	mu     sync.RWMutex
 	closed atomic.Bool
@@ -22,7 +23,7 @@ func newBasePublisher(conn *Connection) (*basePublisher, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &basePublisher{ch: ch}, nil
+	return &basePublisher{conn: conn, ch: ch}, nil
 }
 
 func (p *basePublisher) close() error {
@@ -45,7 +46,7 @@ func (p *basePublisher) publish(ctx context.Context, exchange, routingKey string
 		return ErrClosed
 	}
 
-	return p.ch.PublishWithContext(
+	err := p.ch.PublishWithContext(
 		ctx,
 		exchange,
 		routingKey,
@@ -59,9 +60,38 @@ func (p *basePublisher) publish(ctx context.Context, exchange, routingKey string
 			Timestamp:    time.Now(),
 		},
 	)
+
+	if err != nil {
+		if !isChannelError(err) {
+			return err
+		}
+
+		newCh, chErr := p.conn.channel()
+		if chErr != nil {
+			return fmt.Errorf("rabbitmq: reopen channel: %w", chErr)
+		}
+		p.ch = newCh
+
+		return p.ch.PublishWithContext(
+			ctx,
+			exchange,
+			routingKey,
+			false,
+			false,
+			amqp.Publishing{
+				ContentType:  "application/json",
+				Body:         body,
+				DeliveryMode: amqp.Persistent,
+				MessageId:    uuid.New().String(),
+				Timestamp:    time.Now(),
+			},
+		)
+	}
+
+	return nil
 }
 
-// DirectPublisher publishes to a direct exchange.
+// DirectPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql direct exchange.
 type DirectPublisher struct {
 	*basePublisher
 	eventName string
@@ -90,7 +120,7 @@ func (p *DirectPublisher) Close() error {
 	return p.close()
 }
 
-// FanoutPublisher publishes to a fanout exchange.
+// FanoutPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql fanout exchange.
 type FanoutPublisher struct {
 	*basePublisher
 	eventName string
@@ -117,7 +147,7 @@ func (p *FanoutPublisher) Close() error {
 	return p.close()
 }
 
-// TopicPublisher publishes to a topic exchange with a routing key.
+// TopicPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql topic exchange with 1780772965_create_notification_outbox_events_table.up.sql routing key.
 type TopicPublisher struct {
 	*basePublisher
 	eventName string

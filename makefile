@@ -3,6 +3,8 @@ ROOT_DIR := $(shell pwd)
 
 DOCS_DIR        := $(ROOT_DIR)/internal/docs/services
 DEPLOYMENT_DIR  := $(ROOT_DIR)/deployment
+PROTO_DIR := $(ROOT_DIR)/proto
+GEN_DIR := $(ROOT_DIR)/gen/go
 NETWORK_NAME := docker_wallet-network
 
 COMPOSE := $(DEPLOYMENT_DIR)/compose.bash
@@ -17,6 +19,14 @@ endef
 
 define stop-service
 	$(COMPOSE) $(1) $(2) --profile $(1) --profile $(2) down
+endef
+
+define proto-generate
+	protoc \
+		--proto_path=$(PROTO_DIR) \
+		--go_out=$(GEN_DIR) --go_opt=paths=source_relative \
+		--go-grpc_out=$(GEN_DIR) --go-grpc_opt=paths=source_relative \
+		$$(find $(PROTO_DIR)/$(1)/v1 -name "*.proto")
 endef
 
 check-network:
@@ -64,6 +74,19 @@ start-infrastructure-stage: ## Start staging infrastructure tools
 
 stop-infrastructure-stage: ## Stop staging infrastructure tools
 	$(call stop-service,infrastructure,stage)
+
+# ================================
+# Infrastructure Tools
+# ================================
+proto-generate-common:
+	$(call proto-generate,common)
+
+proto-generate-auth:
+	$(call proto-generate,auth)
+
+proto-generate-notification:
+	$(call proto-generate,notification)
+
 
 # ================================
 # Orchestration

@@ -9,7 +9,7 @@ swagger:
     host: "localhost:180/wallet"
     schemes: "http"
   notification:
-    host: "localhost:180/notification"
+    host: "localhost:180/auth"
     schemes: "http"
 
 otel:

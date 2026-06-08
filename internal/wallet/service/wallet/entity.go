@@ -6,6 +6,7 @@ import (
 
 type Wallet struct {
 	ID        uint64    `db:"id"`
+	UUID      string    `db:"uuid"`
 	UserID    uint64    `db:"user_id"`
 	Balance   int64     `db:"balance"`
 	Currency  string    `db:"currency"`

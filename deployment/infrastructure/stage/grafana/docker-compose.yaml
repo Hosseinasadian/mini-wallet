@@ -3,7 +3,7 @@ services:
     image: grafana/grafana:11.0.0
     container_name: mini_wallet-grafana
     ports:
-      - "3030:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     profiles:
       - infrastructure
       - stage
@@ -11,12 +11,20 @@ services:
     networks:
       - docker_wallet-network
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_SMTP_ENABLED=${GRAFANA_SMTP_ENABLED:-true}
+      - GF_SMTP_HOST=${GRAFANA_SMTP_HOST:-smtp.gmail.com:587}
+      - GF_SMTP_USER=${GRAFANA_SMTP_USER:-}
+      - GF_SMTP_PASSWORD=${GRAFANA_SMTP_PASSWORD:-}
+      - GF_SMTP_FROM_ADDRESS=${GRAFANA_SMTP_FROM_ADDRESS:-}
+      - GF_SMTP_FROM_NAME=${GRAFANA_SMTP_FROM_NAME:-mini-wallet}
+      - GF_UNIFIED_ALERTING_ENABLED=${GRAFANA_UNIFIED_ALERTING_ENABLED:-true}
     volumes:
       - mini_wallet-grafana-data:/var/lib/grafana
       - ./deployment/infrastructure/stage/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./deployment/infrastructure/stage/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/infrastructure/stage/grafana/provisioning/alerting:/etc/grafana/provisioning/alerting:ro
     depends_on:
       - mini_wallet-loki
 

@@ -2,11 +2,16 @@ package wallet
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/hosseinasadian/mini-wallet/pkg/logger"
 	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"net/http"
+)
+
+const (
+	DefaultCurrency = "IRR"
 )
 
 type Service struct {
@@ -33,6 +38,33 @@ func (s *Service) IsReady(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (s *Service) InitWallet(ctx context.Context, userId uint64) (string, error) {
+	const op richerror.Operation = "Service.InitWallet"
+
+	walletUuid := uuid.New().String()
+
+	_, err := s.walletRepo.CreateWallet(ctx, &CreateWalletRequest{
+		UserID:   userId,
+		UUID:     walletUuid,
+		Currency: DefaultCurrency,
+	})
+	if err != nil {
+		var rErr *richerror.RichError
+		if errors.As(err, &rErr) && rErr.Kind() == richerror.KindConflict {
+			return "", richerror.New(op).
+				WithMessage("wallet already exists").
+				WithKind(richerror.KindConflict)
+		}
+
+		return "", richerror.New(op).
+			WithWrapper(err).
+			WithMessage("wallet creation failed").
+			WithKind(richerror.KindInternal)
+	}
+
+	return walletUuid, nil
 }
 
 func (s *Service) Transfer(ctx context.Context, userId uint64, req TransferRequest) (*TransferResponse, error, int) {

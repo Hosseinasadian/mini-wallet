@@ -11,10 +11,14 @@ CREATE TABLE device_sessions (
      ip_address VARBINARY(16),
      user_agent TEXT,
 
+     push_token VARCHAR(512) NULL,
+
      expires_at DATETIME NOT NULL,
 
      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
      last_used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+     KEY idx_device_sessions_user_id (user_id),
 
      UNIQUE KEY uq_user_device (user_id, device_id),
      UNIQUE KEY uq_refresh_token_hash (refresh_token_hash),

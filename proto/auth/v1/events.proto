@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/hosseinasadian/mini-wallet/gen/go/auth/v1;authpb";
+
+message RegisterNewUser{
+  int64 id = 1;
+  string email = 2;
+}
+
+message NewSessionLoggedIn {
+  string id = 1;
+  int64 user_id = 2;
+}
