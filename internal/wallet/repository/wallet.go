@@ -2,14 +2,47 @@ package repository
 
 import (
 	"context"
-	wallet "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
+	"errors"
+	"github.com/go-sql-driver/mysql"
+	walletService "github.com/hosseinasadian/mini-wallet/internal/wallet/service/wallet"
 	pkgLogger "github.com/hosseinasadian/mini-wallet/pkg/logger"
+	"github.com/hosseinasadian/mini-wallet/pkg/richerror"
 	"github.com/jmoiron/sqlx"
 )
 
 type Repository struct {
 	db     *sqlx.DB
 	logger *pkgLogger.Logger
+}
+
+func (repo *Repository) CreateWallet(ctx context.Context, req *walletService.CreateWalletRequest) (uint64, error) {
+	const op = "Repository.CreateWallet"
+
+	result, err := repo.db.ExecContext(ctx,
+		"INSERT INTO wallets (uuid, user_id, balance, currency) VALUES (?, ?, ?, ?)",
+		req.UUID,
+		req.UserID,
+		req.Balance,
+		req.Currency,
+	)
+	if err != nil {
+		var mysqlErr *mysql.MySQLError
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+			return 0, richerror.New(op).
+				WithMessage("wallet already exists").
+				WithKind(richerror.KindConflict)
+		}
+		return 0, err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, richerror.New(op).
+			WithMessage("wallet insert error").
+			WithKind(richerror.KindInternal)
+	}
+
+	return uint64(id), nil
 }
 
 func NewRepository(db *sqlx.DB, logger *pkgLogger.Logger) *Repository {
@@ -32,7 +65,7 @@ func (repo *Repository) GetBalance(ctx context.Context, walletID uint64) (int64,
 	return balance, nil
 }
 
-func (repo *Repository) RunInTx(ctx context.Context, fn func(exec wallet.TxOps) error) error {
+func (repo *Repository) RunInTx(ctx context.Context, fn func(exec walletService.TxOps) error) error {
 	var err error
 	var tx *sqlx.Tx
 	tx, err = repo.db.BeginTxx(ctx, nil)
@@ -77,7 +110,7 @@ func (repo *txRepository) DecreaseBalance(ctx context.Context, walletID uint64, 
 	return err
 }
 
-func (repo *txRepository) CreateTransaction(ctx context.Context, req wallet.CreateTransactionRequest) (uint64, error) {
+func (repo *txRepository) CreateTransaction(ctx context.Context, req walletService.CreateTransactionRequest) (uint64, error) {
 	result, err := repo.tx.ExecContext(ctx, `
 		INSERT INTO wallet_transactions (wallet_id, operation_id, type, amount, reference_id, description, status)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,

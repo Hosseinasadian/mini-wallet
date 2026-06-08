@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"github.com/hosseinasadian/mini-wallet/internal/wallet/delivery/http"
 	walletRepository "github.com/hosseinasadian/mini-wallet/internal/wallet/repository"
-	walletService "github.com/hosseinasadian/mini-wallet/internal/wallet/service"
+	eventService "github.com/hosseinasadian/mini-wallet/internal/wallet/service/event"
+	walletService "github.com/hosseinasadian/mini-wallet/internal/wallet/service/wallet"
 	walletHandler "github.com/hosseinasadian/mini-wallet/internal/wallet/subscriber"
 	"github.com/hosseinasadian/mini-wallet/pkg/broker"
 	"github.com/hosseinasadian/mini-wallet/pkg/config"
@@ -116,7 +117,9 @@ func Setup(config Config, conn *database.Database, logger *pkgLogger.Logger, mp 
 	//	}
 	//}()
 
-	wh := walletHandler.New(mainLogger)
+	eventSvc := eventService.NewService(walletRepo, serviceLogger)
+
+	wh := walletHandler.New(walletSvc, eventSvc, mainLogger)
 
 	return Application{
 		config:         config,
