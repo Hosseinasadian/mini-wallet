@@ -1,4 +1,4 @@
-CREATE TABLE outbox_events (
+CREATE TABLE auth_outbox_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
 
     event_id CHAR(36) NOT NULL,

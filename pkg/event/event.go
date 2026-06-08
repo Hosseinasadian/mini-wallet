@@ -11,6 +11,7 @@ type Type string
 const (
 	TypeAuthNewSessionLoggedIn Type = "auth.v1.NewSessionLoggedIn"
 	TypeAuthRegisterNewUser    Type = "auth.v1.RegisterNewUser"
+	TypeNotificationPush       Type = "notification.v1.push"
 )
 
 func New(ev proto.Message, eventType Type) (*commonpb.EventEnvelope, error) {

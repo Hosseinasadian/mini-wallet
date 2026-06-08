@@ -91,7 +91,7 @@ func (p *basePublisher) publish(ctx context.Context, exchange, routingKey string
 	return nil
 }
 
-// DirectPublisher publishes to 1780407118_create_auth_outbox_events_table.up.sql direct exchange.
+// DirectPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql direct exchange.
 type DirectPublisher struct {
 	*basePublisher
 	eventName string
@@ -120,7 +120,7 @@ func (p *DirectPublisher) Close() error {
 	return p.close()
 }
 
-// FanoutPublisher publishes to 1780407118_create_auth_outbox_events_table.up.sql fanout exchange.
+// FanoutPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql fanout exchange.
 type FanoutPublisher struct {
 	*basePublisher
 	eventName string
@@ -147,7 +147,7 @@ func (p *FanoutPublisher) Close() error {
 	return p.close()
 }
 
-// TopicPublisher publishes to 1780407118_create_auth_outbox_events_table.up.sql topic exchange with 1780407118_create_auth_outbox_events_table.up.sql routing key.
+// TopicPublisher publishes to 1780772965_create_notification_outbox_events_table.up.sql topic exchange with 1780772965_create_notification_outbox_events_table.up.sql routing key.
 type TopicPublisher struct {
 	*basePublisher
 	eventName string

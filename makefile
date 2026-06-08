@@ -84,6 +84,10 @@ proto-generate-common:
 proto-generate-auth:
 	$(call proto-generate,auth)
 
+proto-generate-notification:
+	$(call proto-generate,notification)
+
+
 # ================================
 # Orchestration
 # ================================

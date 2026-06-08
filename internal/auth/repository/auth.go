@@ -243,6 +243,7 @@ func (repo *Repository) GetUserSessions(ctx context.Context, userID int64) ([]au
             d.app_version,
             ds.ip_address,
             ds.user_agent,
+            ds.push_token,
             ds.created_at,
             ds.last_used_at,
             ds.expires_at
@@ -253,6 +254,7 @@ func (repo *Repository) GetUserSessions(ctx context.Context, userID int64) ([]au
     `, userID)
 
 	if err != nil {
+		repo.logger.Error("failed to get user sessions", "error", err, "userID", userID)
 		return nil, richerror.New(op).
 			WithWrapper(err).
 			WithMessage("failed to get user sessions").
@@ -772,10 +774,10 @@ func (repo *txRepository) UpsertSession(ctx context.Context, deviceCtx *auth.Dev
 }
 
 func (repo *txRepository) InsertOutboxEvent(ctx context.Context, event *outboxService.OutboxEvent) error {
-	const op richerror.Operation = "repository.InsertOutboxEvent"
+	const op = "repository.InsertOutboxEvent"
 
 	query := `
-        INSERT INTO outbox_events (
+        INSERT INTO auth_outbox_events (
             event_id,
             event_type,
             payload,

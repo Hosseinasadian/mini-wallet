@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/hosseinasadian/mini-wallet/gen/go/notification/v1;notificationpb";
+
+enum EventType{
+    EVENT_TYPE_UNSPECIFIED = 0;
+
+    EVENT_TYPE_ALERT_SESSION = 1;
+
+}
+
+message NotificationEvent{
+  string event_id = 1;
+  EventType event_type = 2;
+
+  oneof payload{
+    SessionPayload session_payload = 100;
+  }
+}
+
+message SessionPayload{
+  int64 user_id = 1;
+  string session_id = 2;
+  string push_token = 3;
+}

@@ -25,7 +25,7 @@ func (repo *Repository) ClaimOutboxEvents(ctx context.Context, count int64, lock
 	var events []outboxService.OutboxEvent
 	query := `
         SELECT id, event_id, event_type, payload, aggregate_type, aggregate_id, created_at
-        FROM outbox_events
+        FROM auth_outbox_events
         WHERE status = 'pending'
         ORDER BY created_at ASC
         LIMIT ?
@@ -48,7 +48,7 @@ func (repo *Repository) ClaimOutboxEvents(ctx context.Context, count int64, lock
 	}
 
 	query, args, err := sqlx.In(`
-		UPDATE outbox_events
+		UPDATE auth_outbox_events
 		SET status = 'processing',
 		    locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND)
 		WHERE event_id IN (?)
@@ -74,7 +74,7 @@ func (repo *Repository) ClaimSingleEvent(ctx context.Context, eventId string, lo
 	const op = "repository.ClaimSingleEvent"
 
 	res, err := repo.db.ExecContext(ctx, `
-        UPDATE outbox_events
+        UPDATE auth_outbox_events
         SET status = 'processing',
             locked_until = DATE_ADD(NOW(), INTERVAL ? SECOND)
         WHERE event_id = ?
@@ -109,7 +109,7 @@ func (repo *Repository) MarkOutboxEventProcessed(ctx context.Context, eventId st
 
 	now := time.Now()
 	_, err := repo.db.ExecContext(ctx, `
-        UPDATE outbox_events
+        UPDATE auth_outbox_events
         SET status = 'processed',
             processed_at = ?,
             locked_until = NULL
@@ -130,7 +130,7 @@ func (repo *Repository) MarkOutboxEventFailed(ctx context.Context, eventId strin
 	const op = "repository.MarkOutboxEventFailed"
 
 	_, err := repo.db.ExecContext(ctx, `
-        UPDATE outbox_events
+        UPDATE auth_outbox_events
         SET status = 'pending',
             locked_until = NULL
         WHERE event_id = ?
@@ -155,7 +155,7 @@ func (repo *Repository) MarkOutboxEventsProcessed(ctx context.Context, eventIds 
 
 	now := time.Now()
 	query, args, err := sqlx.In(`
-		UPDATE outbox_events
+		UPDATE auth_outbox_events
 		SET status = 'processed',
 		    processed_at = ?,
 		    locked_until = NULL
@@ -186,7 +186,7 @@ func (repo *Repository) MarkOutboxEventsFailed(ctx context.Context, eventIds []s
 	}
 
 	query, args, err := sqlx.In(`
-		UPDATE outbox_events
+		UPDATE auth_outbox_events
 		SET status = 'pending',
 		    locked_until = NULL
 		WHERE event_id IN (?)
@@ -212,7 +212,7 @@ func (repo *Repository) RecoverStaleOutboxEvents(ctx context.Context) (int64, er
 	const op = "repository.RecoverStaleOutboxEvents"
 
 	res, err := repo.db.ExecContext(ctx, `
-        UPDATE outbox_events
+        UPDATE auth_outbox_events
         SET status = 'pending',
             locked_until = NULL
         WHERE status = 'processing'

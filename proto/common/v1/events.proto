@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package common.v1;
 
-option go_package = "github.com/hosseinasadian/mini-wallet/gen/go/auth/v1;commonpb";
+option go_package = "github.com/hosseinasadian/mini-wallet/gen/go/common/v1;commonpb";
 
 import "google/protobuf/any.proto";
 

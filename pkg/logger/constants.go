@@ -16,5 +16,5 @@ const (
 	AppAuth         App = "auth"
 	AppWallet       App = "wallet"
 	AppDocs         App = "docs"
-	AppNotification App = "auth"
+	AppNotification App = "notification"
 )

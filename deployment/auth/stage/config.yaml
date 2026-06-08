@@ -27,3 +27,9 @@ outbox_worker:
 
 outbox_service:
   lock_timeout: "20s"
+
+grpc_server:
+  port: 6002
+  type: "tcp"
+  shutdown_context_timeout: "10s"
+  tls_enabled: false

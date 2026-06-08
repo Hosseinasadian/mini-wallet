@@ -2,14 +2,14 @@ services:
   notification:
     build:
       context: .
-      dockerfile: ./deployment/auth/stage/Dockerfile
-    container_name: mini_wallet-auth
+      dockerfile: ./deployment/notification/stage/Dockerfile
+    container_name: mini_wallet-notification
     profiles:
-      - auth
+      - notification
       - stage
     expose:
       - "5002"
-    env_file: ./deployment/auth/stage/.env
+    env_file: ./deployment/notification/stage/.env
     environment:
       ENV: stage
       LOG_LEVEL: debug

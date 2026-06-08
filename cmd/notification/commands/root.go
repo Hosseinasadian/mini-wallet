@@ -35,7 +35,7 @@ func ReadNotificationConfig() {
 		environment = "development"
 	}
 
-	configPath := filepath.Join(dir, "deployment", "auth", environment, "config.yaml")
+	configPath := filepath.Join(dir, "deployment", "notification", environment, "config.yaml")
 
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(configPath), yaml.Parser()); err != nil {

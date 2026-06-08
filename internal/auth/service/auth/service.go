@@ -529,8 +529,18 @@ func (s *Service) UpdatePushToken(ctx context.Context, userID int64, sessionID, 
 	return nil
 }
 
-func (s *Service) GetActiveSessions(ctx context.Context, userID string) ([]SessionItem, error) {
-	panic("implement me")
+func (s *Service) GetActiveSessions(ctx context.Context, userID int64) ([]SessionItem, error) {
+	const op richerror.Operation = "auth.GetActiveSessions"
+
+	sessions, err := s.repo.GetUserSessions(ctx, userID)
+	if err != nil {
+		return nil, richerror.New(op).
+			WithWrapper(err).
+			WithMessage(ErrGetSessionsFailed).
+			WithKind(richerror.KindInternal)
+	}
+
+	return sessions, nil
 }
 
 func maskEmail(email string) string {

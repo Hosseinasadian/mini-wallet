@@ -19,7 +19,7 @@ import (
 type RoutesConfig struct {
 	Auth         config.Swagger `koanf:"auth"`
 	Wallet       config.Swagger `koanf:"wallet"`
-	Notification config.Swagger `koanf:"auth"`
+	Notification config.Swagger `koanf:"notification"`
 }
 
 type Server struct {
@@ -89,7 +89,7 @@ func (s *Server) setRoutes() {
 		strings.Split(s.routes.Wallet.Schemes, ","),
 	))
 
-	r.GET("/auth", s.patchAndServe(
+	r.GET("/notification", s.patchAndServe(
 		docs.NotificationSpec,
 		s.routes.Notification.Host,
 		strings.Split(s.routes.Notification.Schemes, ","),
@@ -100,7 +100,7 @@ func (s *Server) setRoutes() {
 			"services": []gin.H{
 				{"name": "Auth", "url": "/docs/auth"},
 				{"name": "Wallet", "url": "/docs/wallet"},
-				{"name": "Notification", "url": "/docs/auth"},
+				{"name": "Notification", "url": "/docs/notification"},
 			},
 		})
 	})

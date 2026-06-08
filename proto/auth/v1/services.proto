@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package auth.v1;
+
+option go_package = "github.com/hosseinasadian/mini-wallet/gen/go/auth/v1;authpb";
+
+service AuthService{
+  rpc GetUserActiveSessions(GetUserActiveSessionsRequest) returns (GetUserActiveSessionsResponse);
+}
+
+message Session{
+  int64 user_id = 1;
+  string session_id = 2;
+  string push_token = 3;
+}
+
+message GetUserActiveSessionsRequest{
+  int64 user_id = 1;
+}
+
+message GetUserActiveSessionsResponse{
+  repeated Session sessions = 1;
+}

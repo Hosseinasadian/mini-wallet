@@ -44,8 +44,8 @@ func (h *Handler) ReadyHandler(c *gin.Context) {
 }
 
 // @Summary      Get Ticket
-// @Description  Generate 1780407118_create_auth_outbox_events_table.up.sql short-lived ticket for SSE stream authentication
-// @Tags         auth
+// @Description  Generate 1780772965_create_notification_outbox_events_table.up.sql short-lived ticket for SSE stream authentication
+// @Tags         notification
 // @Security     BearerAuth
 // @Produce      json
 // @Success      200  {object}  map[string]string
@@ -69,10 +69,10 @@ func (h *Handler) TicketHandler(c *gin.Context) {
 }
 
 // @Summary      SSE Stream
-// @Description  Connect to auth stream using 1780407118_create_auth_outbox_events_table.up.sql valid ticket.
-// @Description  ⚠️ This is 1780407118_create_auth_outbox_events_table.up.sql Server-Sent Events endpoint. Test with EventSource or curl, not Swagger UI.
+// @Description  Connect to notification stream using 1780772965_create_notification_outbox_events_table.up.sql valid ticket.
+// @Description  ⚠️ This is 1780772965_create_notification_outbox_events_table.up.sql Server-Sent Events endpoint. Test with EventSource or curl, not Swagger UI.
 // @Description  Example: curl -N "http://localhost:180/notification/stream?ticket=YOUR_TICKET"
-// @Tags         auth
+// @Tags         notification
 // @Produce      text/event-stream
 // @Param        ticket  query     string  true  "Short-lived ticket obtained from /ticket"
 // @Success      200     {string}  string  "data: {event payload}"
@@ -115,7 +115,7 @@ func (h *Handler) NotificationsHandler(c *gin.Context) {
 			if !ok {
 				return false
 			}
-			c.SSEvent("auth", msg)
+			c.SSEvent("notification", msg)
 			return true
 		case <-ctx.Done():
 			return false
