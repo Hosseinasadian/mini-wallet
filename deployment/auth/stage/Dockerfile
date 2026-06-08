@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY go.mod go.sum ./
 COPY . .
-RUN #go mod tidy && go mod vendor
+RUN go mod tidy && go mod vendor
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -mod=vendor \
