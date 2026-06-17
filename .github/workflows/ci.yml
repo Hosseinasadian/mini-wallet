@@ -18,7 +18,7 @@ permissions:
 env:
   REGISTRY: docker.io
   IMAGE_PREFIX: hossein1992/mini-wallet
-  SERVICES: "auth wallet docs auth"
+  SERVICES: "auth wallet docs notification"
   BASE_URL: "http://localhost:180"
 
 jobs:
@@ -73,6 +73,7 @@ jobs:
 
       - name: Start infrastructure
         run: |
+          make ensure-env
           make check-network
           make start-infrastructure-stage
 

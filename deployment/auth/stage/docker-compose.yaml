@@ -9,11 +9,10 @@ services:
       - stage
     expose:
       - "5002"
-    env_file: ./deployment/auth/stage/.env
     environment:
-      ENV: stage
-      LOG_LEVEL: debug
-      GIN_MODE: release
+      ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${APP_LOG_LEVEL:-debug}
+      GIN_MODE: ${APP_GIN_MODE:-release}
     networks:
       - docker_wallet-network
     restart: unless-stopped
