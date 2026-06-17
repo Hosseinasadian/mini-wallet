@@ -9,6 +9,7 @@ services:
       - stage
     expose:
       - "5002"
+    env_file: ./.env
     environment:
       ENV: ${APP_ENV:-development}
       LOG_LEVEL: ${APP_LOG_LEVEL:-debug}
