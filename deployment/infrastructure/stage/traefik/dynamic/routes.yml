@@ -24,12 +24,12 @@ http:
       service: wallet-service
 
     notification:
-      rule: "PathPrefix(`/auth`)"
+      rule: "PathPrefix(`/notification`)"
       middlewares:
         - cb
-        - strip-auth-prefix
+        - strip-notification-prefix
         - sse-headers
-      service: auth-service
+      service: notification-service
 
   middlewares:
     cb:
@@ -54,7 +54,7 @@ http:
     strip-notification-prefix:
       stripPrefix:
         prefixes:
-          - "/auth"
+          - "/notification"
 
     sse-headers:
       headers:

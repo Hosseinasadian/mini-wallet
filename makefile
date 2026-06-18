@@ -1,6 +1,8 @@
 # Deployment script paths
 ROOT_DIR := $(shell pwd)
 
+ENV_FILE := $(ROOT_DIR)/.env
+EXAMPLE_FILE := $(ROOT_DIR)/.env.example
 DOCS_DIR        := $(ROOT_DIR)/internal/docs/services
 DEPLOYMENT_DIR  := $(ROOT_DIR)/deployment
 PROTO_DIR := $(ROOT_DIR)/proto
@@ -28,6 +30,17 @@ define proto-generate
 		--go-grpc_out=$(GEN_DIR) --go-grpc_opt=paths=source_relative \
 		$$(find $(PROTO_DIR)/$(1)/v1 -name "*.proto")
 endef
+
+ensure-env:
+	@if [ ! -f "$(ENV_FILE)" ]; then \
+		if [ -f "$(EXAMPLE_FILE)" ]; then \
+			echo "Copying $(EXAMPLE_FILE) to $(ENV_FILE)..."; \
+			cp $(EXAMPLE_FILE) $(ENV_FILE); \
+		else \
+			echo "Error: $(EXAMPLE_FILE) not found!"; \
+			exit 1; \
+		fi; \
+	fi
 
 check-network:
 	@docker network inspect $(NETWORK_NAME) > /dev/null 2>&1 || docker network create $(NETWORK_NAME)
