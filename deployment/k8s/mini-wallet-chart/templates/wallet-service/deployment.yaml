@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-wallet-app
+spec:
+  replicas: {{ .Values.wallet.replicaCount }}
+  selector:
+    matchLabels:
+      app: wallet-wallet
+  template:
+    metadata:
+      labels:
+        app: wallet-wallet
+    spec:
+      hostAliases:
+        - ip: "172.17.0.1"
+          hostnames:
+            - "host.docker.internal"
+      containers:
+        - name: wallet-container
+          image: "{{ .Values.wallet.image.repository }}:{{ .Values.wallet.image.tag }}"
+          imagePullPolicy: {{ .Values.wallet.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.wallet.ports.container }}
+              name: http-port
+          envFrom:
+            - configMapRef:
+                name: wallet-wallet-env-config

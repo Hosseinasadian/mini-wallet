@@ -1,0 +1,20 @@
+ports:
+  web:
+    port: 80
+    expose:
+      default: true
+  websecure:
+    port: 443
+    expose:
+      default: true
+
+ingressRoute:
+  dashboard:
+    enabled: true
+    entryPoints: ["web"]
+
+providers:
+  kubernetesCRD:
+    ingressClass: traefik
+  kubernetesIngress:
+    ingressClass: traefik

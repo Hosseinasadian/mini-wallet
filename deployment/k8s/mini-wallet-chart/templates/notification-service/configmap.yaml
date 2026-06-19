@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wallet-notification-env-config
+data:
+  ENV: "{{ .Values.global.APP_ENV }}"
+  LOG_LEVEL: "{{ .Values.global.APP_LOG_LEVEL }}"
+  GIN_MODE: "{{ .Values.global.APP_GIN_MODE }}"
+
+  NOTIFICATION_JWT__SECRET: "jwt123token!"
+
+  NOTIFICATION_REDIS_HOST: "host.docker.internal"
+  NOTIFICATION_REDIS_PORT: "63791"
+  NOTIFICATION_REDIS_PASSWORD: "redis_stage_password_2024"
+  NOTIFICATION_REDIS_DB: "0"
+
+  NOTIFICATION_SUBSCRIBER_URL: "amqp://guest:guest@host.docker.internal:56721"
+
+  NOTIFICATION_ONE__SIGNAL_APP__ID: ""
+  NOTIFICATION_ONE__SIGNAL_API__KEY: ""
+
+  NOTIFICATION_MYSQL_HOST: "host.docker.internal"
+  NOTIFICATION_MYSQL_PORT: "33061"
+  NOTIFICATION_MYSQL_USERNAME: "wallet_admin"
+  NOTIFICATION_MYSQL_PASSWORD: "wallet_pass"
+
+  NOTIFICATION_OTEL_ENDPOINT: "host.docker.internal:8317"
+
+  NOTIFICATION_GRPC__NOTIFICATION__CLIENT_HOST: "wallet-auth-service"
+  NOTIFICATION_GRPC__NOTIFICATION__CLIENT_PORT: "6002"

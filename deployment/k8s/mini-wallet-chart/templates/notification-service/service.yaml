@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet-notification-service
+spec:
+  type: ClusterIP
+  selector:
+    app: wallet-notification
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.notification.ports.service }}
+      targetPort: {{ .Values.notification.ports.container }}

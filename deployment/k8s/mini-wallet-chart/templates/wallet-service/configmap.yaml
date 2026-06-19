@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wallet-wallet-env-config
+data:
+  ENV: "{{ .Values.global.APP_ENV }}"
+  LOG_LEVEL: "{{ .Values.global.APP_LOG_LEVEL }}"
+  GIN_MODE: "{{ .Values.global.APP_GIN_MODE }}"
+
+  WALLET_MYSQL_HOST: "host.docker.internal"
+  WALLET_MYSQL_PORT: "33061"
+  WALLET_MYSQL_USERNAME: "wallet_admin"
+  WALLET_MYSQL_PASSWORD: "wallet_pass"
+
+  WALLET_SUBSCRIBER_URL: "amqp://guest:guest@host.docker.internal:56721"
+
+  WALLET_OTEL_ENDPOINT: "host.docker.internal:8317"

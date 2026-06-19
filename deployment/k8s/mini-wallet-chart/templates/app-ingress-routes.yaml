@@ -1,0 +1,48 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: mini-wallet-gateway
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  ingressClassName: traefik
+  routes:
+    - match: Host("api.wallet.local") && PathPrefix("/auth")
+      kind: Rule
+      middlewares:
+        - name: cb-middleware
+        - name: strip-auth-prefix
+        - name: rate-limit-middleware
+      services:
+        - name: wallet-auth-service
+          port: 5002
+
+    - match: Host("api.wallet.local") && PathPrefix("/wallet")
+      kind: Rule
+      middlewares:
+        - name: cb-middleware
+        - name: strip-wallet-prefix
+        - name: rate-limit-middleware
+      services:
+        - name: wallet-wallet-service
+          port: 5002
+
+    - match: Host("api.wallet.local") && PathPrefix("/notification")
+      kind: Rule
+      middlewares:
+        - name: cb-middleware
+        - name: strip-notification-prefix
+        - name: sse-headers
+      services:
+        - name: wallet-notification-service
+          port: 5002
+
+    - match: Host("api.wallet.local") && PathPrefix("/docs")
+      kind: Rule
+      middlewares:
+        - name: cb-middleware
+        - name: strip-docs-prefix
+      services:
+        - name: wallet-docs-service
+          port: 5002

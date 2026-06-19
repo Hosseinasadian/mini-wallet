@@ -20,10 +20,28 @@ env:
 
 jobs:
   # ================================
-  # 1. DETECT CHANGES & TEST
+  # 1. HELM CHART LINTER & VALIDATION
+  # ================================
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.12.0'
+
+      - name: Lint Helm Chart
+        run: |
+          echo "☸️ Linting mini-wallet packaged chart structures..."
+          helm lint deployment/k8s/mini-wallet-chart
+  # ================================
+  # 2. DETECT CHANGES & TEST
   # ================================
   pr-check:
     runs-on: ubuntu-latest
+    needs: helm-lint
     outputs:
       changed_services: ${{ steps.list.outputs.changed_services }}
 
@@ -110,7 +128,7 @@ jobs:
           make stop-infrastructure-stage || true
 
   # ================================
-  # 2. BUILD & PUSH
+  # 3. BUILD & PUSH
   # ================================
   build-and-push:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

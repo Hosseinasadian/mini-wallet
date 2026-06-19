@@ -1,0 +1,45 @@
+global:
+  APP_ENV: "stage"
+  APP_LOG_LEVEL: "debug"
+  APP_GIN_MODE: "release"
+
+auth:
+  replicaCount: 2
+  image:
+    repository: docker.io/hossein1992/mini-wallet-auth
+    tag: latest
+    pullPolicy: Always
+  ports:
+    container: 5002
+    service: 5002
+    grpc: 6002
+
+docs:
+  replicaCount: 1
+  image:
+    repository: docker.io/hossein1992/mini-wallet-docs
+    tag: latest
+    pullPolicy: Always
+  ports:
+    container: 5002
+    service: 5002
+
+notification:
+  replicaCount: 2
+  image:
+    repository: docker.io/hossein1992/mini-wallet-notification
+    tag: latest
+    pullPolicy: Always
+  ports:
+    container: 5002
+    service: 5002
+
+wallet:
+  replicaCount: 2
+  image:
+    repository: docker.io/hossein1992/mini-wallet-wallet
+    tag: latest
+    pullPolicy: Always
+  ports:
+    container: 5002
+    service: 5002
