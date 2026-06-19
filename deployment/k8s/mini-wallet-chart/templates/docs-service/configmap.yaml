@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wallet-docs-env-config
+data:
+  ENV: "{{ .Values.global.APP_ENV }}"
+  LOG_LEVEL: "{{ .Values.global.APP_LOG_LEVEL }}"
+  GIN_MODE: "{{ .Values.global.APP_GIN_MODE }}"

@@ -1,0 +1,63 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: cb-middleware
+spec:
+  circuitBreaker:
+    expression: "NetworkErrorRatio() > 0.5 || ResponseCodeRatio(500, 600, 0, 600) > 0.5"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-auth-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - "/auth"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-wallet-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - "/wallet"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-notification-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - "/notification"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: strip-docs-prefix
+spec:
+  stripPrefix:
+    prefixes:
+      - "/docs"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: sse-headers
+spec:
+  headers:
+    customResponseHeaders:
+      X-Accel-Buffering: "no"
+      Cache-Control: "no-cache"
+      Connection: "keep-alive"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: rate-limit-middleware
+spec:
+  rateLimit:
+    average: 100
+    burst: 50

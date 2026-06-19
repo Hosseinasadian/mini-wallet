@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-notification-app
+spec:
+  replicas: {{ .Values.notification.replicaCount }}
+  selector:
+    matchLabels:
+      app: wallet-notification
+  template:
+    metadata:
+      labels:
+        app: wallet-notification
+    spec:
+      hostAliases:
+        - ip: "172.17.0.1"
+          hostnames:
+            - "host.docker.internal"
+      containers:
+        - name: notification-container
+          image: "{{ .Values.notification.image.repository }}:{{ .Values.notification.image.tag }}"
+          imagePullPolicy: {{ .Values.notification.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.notification.ports.container }}
+              name: http-port
+          envFrom:
+            - configMapRef:
+                name: wallet-notification-env-config

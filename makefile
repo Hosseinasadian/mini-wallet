@@ -7,7 +7,11 @@ DOCS_DIR        := $(ROOT_DIR)/internal/docs/services
 DEPLOYMENT_DIR  := $(ROOT_DIR)/deployment
 PROTO_DIR := $(ROOT_DIR)/proto
 GEN_DIR := $(ROOT_DIR)/gen/go
+K8S_DIR := $(ROOT_DIR)/deployment/k8s
+HELM_CHART_DIR := $(K8S_DIR)/mini-wallet-chart
 NETWORK_NAME := docker_wallet-network
+KIND_CONFIG ?= $(ROOT_DIR)/deployment/k8s/kind-config.yaml
+CLUSTER_NAME ?= mini-wallet-cluster
 
 COMPOSE := $(DEPLOYMENT_DIR)/compose.bash
 
@@ -139,3 +143,55 @@ swagger-generate:
 	@$(MAKE) swagger-generate-wallet
 	@$(MAKE) swagger-generate-notification
 	@echo "Swagger documentation generated successfully!"
+
+# -----------------------------------------------------------------------------
+# Kubernetes & Helm Management
+# -----------------------------------------------------------------------------
+
+k8s-cluster-clean:
+	@echo "🗑️ Deleting old Kind cluster..."
+	kind delete cluster --name $(CLUSTER_NAME) || true
+
+k8s-cluster-create:
+	@echo "🏗️ Creating new Kind cluster with port mappings..."
+	kind create cluster --name $(CLUSTER_NAME) --config $(KIND_CONFIG)
+	@echo "🔌 Switching kubectl context..."
+	kubectl cluster-info --context kind-$(CLUSTER_NAME)
+
+k8s-cluster-rebuild: k8s-cluster-clean k8s-cluster-create
+	@echo "📦 Wait a bit for cluster nodes..."
+	sleep 3
+	@echo "☸️ Initializing Traefik..."
+	make k8s-init-traefik
+	@echo "⏳ Waiting for Traefik to become active..."
+	kubectl rollout status deployment/traefik --timeout=300s
+	@echo "🚀 Deploying mini-wallet applications..."
+	make k8s-deploy
+	@echo "🎯 System is fully ready! Test now without port-forward."
+
+k8s-init-traefik:
+	@echo "🌐 Adding Traefik Helm repository..."
+	helm repo add traefik https://traefik.github.io/charts
+	helm repo update
+	@echo "🚀 Installing/Upgrading Traefik Ingress Controller..."
+	helm upgrade --install traefik traefik/traefik -f $(K8S_DIR)/traefik-values.yaml
+
+k8s-deploy:
+	@echo "📦 Deploying mini-wallet chart to Kubernetes..."
+	helm install mini-wallet $(HELM_CHART_DIR)
+
+k8s-upgrade:
+	@echo "🔄 Upgrading mini-wallet deployment..."
+	helm upgrade mini-wallet $(HELM_CHART_DIR)
+
+k8s-destroy:
+	@echo "🗑️ Removing mini-wallet application..."
+	helm uninstall mini-wallet
+	@echo "🗑️ Removing Traefik Ingress..."
+	helm uninstall traefik
+
+k8s-status:
+	@echo "📊 Helm Releases:"
+	@helm list
+	@echo "\n☸️ Kubernetes Pods:"
+	@kubectl get pods

@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wallet-auth-app
+spec:
+  replicas: {{ .Values.auth.replicaCount }}
+  selector:
+    matchLabels:
+      app: wallet-auth
+  template:
+    metadata:
+      labels:
+        app: wallet-auth
+    spec:
+      hostAliases:
+        - ip: "172.17.0.1"
+          hostnames:
+            - "host.docker.internal"
+      containers:
+        - name: auth-container
+          image: "{{ .Values.auth.image.repository }}:{{ .Values.auth.image.tag }}"
+          imagePullPolicy: {{ .Values.auth.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.auth.ports.container }}
+              name: http-port
+            - containerPort: {{ .Values.auth.ports.grpc }}
+              name: grpc-port
+          envFrom:
+            - configMapRef:
+                name: wallet-auth-env-config
